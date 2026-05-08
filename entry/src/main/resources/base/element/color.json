@@ -1,0 +1,132 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "primary_bg",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "surface",
+      "value": "#F5F5F5"
+    },
+    {
+      "name": "text_primary",
+      "value": "#182431"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#99182431"
+    },
+    {
+      "name": "text_hint",
+      "value": "#66182431"
+    },
+    {
+      "name": "accent",
+      "value": "#7B7FFF"
+    },
+    {
+      "name": "mini_player_surface",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "mini_player_neutral_button",
+      "value": "#14182431"
+    },
+    {
+      "name": "mini_player_placeholder",
+      "value": "#14182431"
+    },
+    {
+      "name": "now_playing_overlay",
+      "value": "#BFF7F8FA"
+    },
+    {
+      "name": "now_playing_cover_surface",
+      "value": "#FFFDFDFF"
+    },
+    {
+      "name": "now_playing_cover_icon",
+      "value": "#2348B8"
+    },
+    {
+      "name": "now_playing_primary_icon",
+      "value": "#1B2554"
+    },
+    {
+      "name": "now_playing_secondary_icon",
+      "value": "#6A7397"
+    },
+    {
+      "name": "progress_track",
+      "value": "#33182431"
+    },
+    {
+      "name": "now_playing_menu_panel",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "now_playing_menu_item",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "online_search_api_dialog_surface",
+      "value": "#FFFDFDFF"
+    },
+    {
+      "name": "online_search_api_input_bg",
+      "value": "#FFF5F7FB"
+    },
+    {
+      "name": "online_search_api_warning",
+      "value": "#FFEC5A4C"
+    },
+    {
+      "name": "online_search_api_link",
+      "value": "#FF4A6FE3"
+    },
+    {
+      "name": "album_disc_fill",
+      "value": "#FF1A1A1A"
+    },
+    {
+      "name": "album_disc_shadow",
+      "value": "#33000000"
+    },
+    {
+      "name": "album_disc_ring",
+      "value": "#0AFFFFFF"
+    },
+    {
+      "name": "album_placeholder_bg",
+      "value": "#14FFFFFF"
+    },
+    {
+      "name": "album_placeholder_icon",
+      "value": "#66182431"
+    },
+    {
+      "name": "album_center_fill",
+      "value": "#FF0A0A14"
+    },
+    {
+      "name": "album_center_stroke",
+      "value": "#26FFFFFF"
+    },
+    {
+      "name": "divider",
+      "value": "#1A182431"
+    },
+    {
+      "name": "favorite_active",
+      "value": "#FF7B7FFF"
+    },
+    {
+      "name": "floating_tab_surface",
+      "value": "#B3FFFFFF"
+    }
+  ]
+}
