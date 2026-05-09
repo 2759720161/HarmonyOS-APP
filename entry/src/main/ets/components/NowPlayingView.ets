@@ -81,16 +81,17 @@ export struct NowPlayingView {
     return distance * (1 - Math.min(1, (p - threshold) / (1 - threshold)))
   }
 
-  // 背景提前接管，避免 MiniPlayer shell 淡出前后出现透明空档。
+  private transitionT(start: number, end: number): number {
+    const t = Math.max(0, Math.min(1, (this.expandProgress - start) / (end - start)))
+    return t * t * (3 - 2 * t)
+  }
+
   private getBgOpacity(): number {
-    const p = Math.max(0, Math.min(1, this.expandProgress))
-    if (p <= 0.20) {
-      return 0
-    }
-    if (p >= 0.75) {
-      return 1
-    }
-    return (p - 0.20) / 0.55
+    return this.transitionT(0.72, 0.92)
+  }
+
+  private getCoverPageRealContentOpacity(): number {
+    return this.transitionT(0.92, 1.0)
   }
 
   @State private coverPixelMap: image.PixelMap | null = null
@@ -2705,7 +2706,7 @@ export struct NowPlayingView {
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
-        .opacity(this.getContentOpacity(0.58))
+        .opacity(this.getContentOpacity(0.58) * this.getCoverPageRealContentOpacity())
         .scale({
           x: 0.82 + 0.18 * this.getContentOpacity(0.58),
           y: 0.82 + 0.18 * this.getContentOpacity(0.58),
@@ -2805,7 +2806,6 @@ export struct NowPlayingView {
             ]
           })
           .opacity(this.getBgOpacity())
-          .animation({ duration: 800, curve: Curve.EaseInOut })
 
         Ellipse()
           .width(this.getOverlayScreenWidth() * 1.18)

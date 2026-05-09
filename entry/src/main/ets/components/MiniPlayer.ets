@@ -63,8 +63,8 @@ export struct MiniPlayer {
   private readonly coverArtistFont: number = 13
   // 阶段阈值
   private readonly morphEnd: number = 0.60
-  private readonly shellFadeStart: number = 0.80
-  private readonly shellFadeEnd: number = 0.95
+  private readonly shellFadeStart: number = 0.72
+  private readonly shellFadeEnd: number = 0.92
 
   aboutToAppear(): void {
     this.syncCover()
@@ -150,6 +150,11 @@ export struct MiniPlayer {
     return 1 - (1 - t) * (1 - t)
   }
 
+  private transitionT(start: number, end: number): number {
+    const t = this.clamp01((this.expandProgress - start) / (end - start))
+    return t * t * (3 - 2 * t)
+  }
+
   private getCardHeight(): number {
     const t = this.morphT()
     const fullH = this.screenHeightVp > 0 ? this.screenHeightVp : 800
@@ -191,14 +196,7 @@ export struct MiniPlayer {
 
   // pill 自身背景：在 shellFadeStart 之后淡出，让 NowPlayingView 的纯背景接管
   private getShellOpacity(): number {
-    const p = this.expandProgress
-    if (p <= this.shellFadeStart) {
-      return 1
-    }
-    if (p >= this.shellFadeEnd) {
-      return 0
-    }
-    return 1 - (p - this.shellFadeStart) / (this.shellFadeEnd - this.shellFadeStart)
+    return 1 - this.transitionT(this.shellFadeStart, this.shellFadeEnd)
   }
 
   private isHitTestActive(): boolean {
@@ -371,7 +369,7 @@ export struct MiniPlayer {
     if (this.detailDialogVisible) {
       return 0
     }
-    return 1 - this.getEffectiveLyricsProgress()
+    return (1 - this.getEffectiveLyricsProgress()) * (1 - this.transitionT(0.92, 1.0))
   }
 
   private getImmersiveProgress(): number {
@@ -384,6 +382,10 @@ export struct MiniPlayer {
 
   private getCoverImmersiveScale(): number {
     return 1
+  }
+
+  private shouldUseMarquee(): boolean {
+    return this.expandProgress <= 0.001
   }
 
   @Builder
@@ -429,7 +431,7 @@ export struct MiniPlayer {
 
   @Builder
   private TitleMorph() {
-    if (this.expandProgress < 0.05) {
+    if (this.shouldUseMarquee()) {
       Marquee({
         start: this.currentTitle.length > 12,
         step: 6,
@@ -571,9 +573,7 @@ export struct MiniPlayer {
       }
 
       // —— 仅 pill 状态下显示的右侧两颗按钮 ——
-      if (this.expandProgress < 0.15) {
-        this.PillButtons()
-      }
+      this.PillButtons()
 
     }
     .width('100%')
