@@ -25,6 +25,9 @@ interface CoverPageTheme {
   topColor: string
   middleColor: string
   bottomColor: string
+  veilColor: string
+  glowColor: string
+  glowAccentColor: string
   primaryColor: string
   secondaryColor: string
   tertiaryColor: string
@@ -93,9 +96,12 @@ export struct NowPlayingView {
 
   @State private coverPixelMap: image.PixelMap | null = null
   @State private coverBackdropBaseColor: string = '#F8FAFB'
-  @State private coverBackdropTopColor: string = 'rgba(123, 127, 255, 0.18)'
-  @State private coverBackdropMiddleColor: string = 'rgba(123, 127, 255, 0.12)'
-  @State private coverBackdropBottomColor: string = 'rgba(255, 255, 255, 0.20)'
+  @State private coverBackdropTopColor: string = '#E8F1F2'
+  @State private coverBackdropMiddleColor: string = '#EDF2F0'
+  @State private coverBackdropBottomColor: string = '#D8E2E3'
+  @State private coverBackdropVeilColor: string = 'rgba(255, 255, 255, 0.02)'
+  @State private coverBackdropGlowColor: string = 'rgba(232, 241, 242, 1)'
+  @State private coverBackdropAccentGlowColor: string = 'rgba(216, 226, 227, 1)'
   @State private coverPagePrimaryColor: string = '#202020'
   @State private coverPageSecondaryColor: string = 'rgba(32, 32, 32, 0.68)'
   @State private coverPageTertiaryColor: string = 'rgba(32, 32, 32, 0.46)'
@@ -233,8 +239,14 @@ export struct NowPlayingView {
       return
     }
 
+    let themePixelMap: image.PixelMap | null = null
+    let shouldReleaseThemePixelMap: boolean = false
     try {
-      const colorPicker = await effectKit.createColorPicker(pixelMap)
+      const sampledPixelMap = await this.createThemePixelMap(pixelMap)
+      themePixelMap = sampledPixelMap
+      shouldReleaseThemePixelMap = sampledPixelMap !== pixelMap
+
+      const colorPicker = await effectKit.createColorPicker(sampledPixelMap)
       if (taskToken !== this.coverThemeTaskToken) {
         return
       }
@@ -242,16 +254,31 @@ export struct NowPlayingView {
       const mainColor = colorPicker.getMainColorSync() as CoverThemeRgb
       const averageColor = colorPicker.getAverageColor() as CoverThemeRgb
       const saturationColor = colorPicker.getHighestSaturationColor() as CoverThemeRgb
+      const edgeColor = await this.getEdgeAverageColor(sampledPixelMap)
+      if (taskToken !== this.coverThemeTaskToken) {
+        return
+      }
+
       const safeMainColor = this.isUsableThemeColor(mainColor) ? mainColor : this.hexToRgb(Colors.DEFAULT_DOMINANT_COLOR)
       const safeAverageColor = this.isUsableThemeColor(averageColor) ? averageColor : safeMainColor
       const safeSaturationColor = this.isUsableThemeColor(saturationColor) ? saturationColor : safeMainColor
-      const theme = this.buildCoverPageTheme(safeMainColor, safeAverageColor, safeSaturationColor)
+      const safeEdgeColor = this.isUsableThemeColor(edgeColor) ? edgeColor : safeAverageColor
+
+      console.info('ThemeColor',
+        `main=${this.colorToText(safeMainColor)} average=${this.colorToText(safeAverageColor)} ` +
+          `edge=${this.colorToText(safeEdgeColor)} saturation=${this.colorToText(safeSaturationColor)}`)
+
+      const theme = this.buildCoverPageTheme(safeMainColor, safeAverageColor, safeEdgeColor, safeSaturationColor)
 
       CoverPageThemeCache.set(cacheKey, theme)
       this.applyCoverPageTheme(theme)
     } catch (error) {
       console.error('NowPlayingView', `Cover theme extraction failed: ${JSON.stringify(error)}`)
       this.applyCoverPageTheme(this.getFallbackCoverPageTheme())
+    } finally {
+      if (shouldReleaseThemePixelMap && themePixelMap) {
+        themePixelMap.release()
+      }
     }
   }
 
@@ -276,6 +303,9 @@ export struct NowPlayingView {
     this.coverBackdropTopColor = theme.topColor
     this.coverBackdropMiddleColor = theme.middleColor
     this.coverBackdropBottomColor = theme.bottomColor
+    this.coverBackdropVeilColor = theme.veilColor
+    this.coverBackdropGlowColor = theme.glowColor
+    this.coverBackdropAccentGlowColor = theme.glowAccentColor
     this.coverPagePrimaryColor = theme.primaryColor
     this.coverPageSecondaryColor = theme.secondaryColor
     this.coverPageTertiaryColor = theme.tertiaryColor
@@ -289,9 +319,12 @@ export struct NowPlayingView {
     if (this.isDarkMode) {
       return {
         baseColor: '#080A0F',
-        topColor: 'rgba(123, 127, 255, 0.32)',
-        middleColor: 'rgba(58, 68, 110, 0.28)',
-        bottomColor: 'rgba(0, 0, 0, 0.22)',
+        topColor: 'rgba(123, 127, 255, 0.85)',
+        middleColor: 'rgba(88, 96, 156, 0.92)',
+        bottomColor: 'rgba(58, 68, 110, 0.95)',
+        veilColor: 'rgba(0, 0, 0, 0.06)',
+        glowColor: 'rgba(123, 127, 255, 1)',
+        glowAccentColor: 'rgba(88, 96, 156, 1)',
         primaryColor: '#FFFFFF',
         secondaryColor: 'rgba(255, 255, 255, 0.74)',
         tertiaryColor: 'rgba(255, 255, 255, 0.52)',
@@ -302,9 +335,12 @@ export struct NowPlayingView {
 
     return {
       baseColor: '#F8FAFB',
-      topColor: 'rgba(123, 127, 255, 0.18)',
-      middleColor: 'rgba(123, 127, 255, 0.12)',
-      bottomColor: 'rgba(255, 255, 255, 0.20)',
+      topColor: '#E8F1F2',
+      middleColor: '#EDF2F0',
+      bottomColor: '#D8E2E3',
+      veilColor: 'rgba(255, 255, 255, 0.02)',
+      glowColor: 'rgba(220, 238, 240, 1)',
+      glowAccentColor: 'rgba(238, 228, 214, 1)',
       primaryColor: '#202020',
       secondaryColor: 'rgba(32, 32, 32, 0.68)',
       tertiaryColor: 'rgba(32, 32, 32, 0.46)',
@@ -313,25 +349,352 @@ export struct NowPlayingView {
     }
   }
 
-  private buildCoverPageTheme(mainColor: CoverThemeRgb, averageColor: CoverThemeRgb,
-    saturationColor: CoverThemeRgb): CoverPageTheme {
-    const luminance: number = this.getLuminance(mainColor)
-    const isLightBackground: boolean = luminance > 160
-    const baseColor: string = isLightBackground ? '#F8FAFB' : '#080A0F'
+  private async createThemePixelMap(pixelMap: image.PixelMap): Promise<image.PixelMap> {
+    const imageInfo = await pixelMap.getImageInfo()
+    const width: number = Math.max(1, imageInfo.size.width)
+    const height: number = Math.max(1, imageInfo.size.height)
+    const maxSide: number = Math.max(width, height)
+    const sampleSize: number = 96
+
+    if (maxSide <= sampleSize) {
+      return pixelMap
+    }
+
+    const scale: number = sampleSize / maxSide
+    return await pixelMap.createScaledPixelMap(scale, scale)
+  }
+
+  private async getEdgeAverageColor(pixelMap: image.PixelMap): Promise<CoverThemeRgb> {
+    const imageInfo = await pixelMap.getImageInfo()
+    const width: number = Math.max(1, imageInfo.size.width)
+    const height: number = Math.max(1, imageInfo.size.height)
+    const buffer = new ArrayBuffer(width * height * 4)
+    await pixelMap.readPixelsToBuffer(buffer)
+
+    const data = new Uint8Array(buffer)
+    const edgeSize: number = Math.max(1, Math.floor(Math.min(width, height) * 0.12))
+    let redTotal: number = 0
+    let greenTotal: number = 0
+    let blueTotal: number = 0
+    let count: number = 0
+
+    for (let y = 0; y < height; y += 2) {
+      for (let x = 0; x < width; x += 2) {
+        const isEdge: boolean = x < edgeSize || x >= width - edgeSize || y < edgeSize || y >= height - edgeSize
+        if (!isEdge) {
+          continue
+        }
+
+        const index: number = (y * width + x) * 4
+        if (index + 2 >= data.length) {
+          continue
+        }
+
+        redTotal += data[index]
+        greenTotal += data[index + 1]
+        blueTotal += data[index + 2]
+        count += 1
+      }
+    }
+
+    if (count === 0) {
+      return { red: 238, green: 238, blue: 238 }
+    }
 
     return {
-      baseColor,
-      topColor: this.toRgba(mainColor, isLightBackground ? 0.30 : 0.56),
-      middleColor: this.toRgba(averageColor, isLightBackground ? 0.42 : 0.46),
-      bottomColor: this.toRgba(saturationColor, isLightBackground ? 0.24 : 0.38),
+      red: Math.round(redTotal / count),
+      green: Math.round(greenTotal / count),
+      blue: Math.round(blueTotal / count)
+    }
+  }
+
+  private buildCoverPageTheme(
+    mainColor: CoverThemeRgb,
+    averageColor: CoverThemeRgb,
+    edgeColor: CoverThemeRgb,
+    saturationColor: CoverThemeRgb
+  ): CoverPageTheme {
+    const rawSeedColor = this.selectSafeSeedColor(mainColor, averageColor, edgeColor, saturationColor)
+    const seedColor = this.normalizeSeedColor(rawSeedColor, edgeColor)
+    const mixedColor = this.mixColor(seedColor, edgeColor, 0.42)
+    const seedLuminance: number = this.getLuminance(seedColor)
+    const isDarkTheme: boolean = seedLuminance < 115
+
+    const bgTop = isDarkTheme
+      ? this.toDarkBackground(seedColor, 0.22, 0.82)
+      : this.ensureColorfulEnough(this.toPastelBackground(seedColor, 0.16, 1), seedColor)
+    const bgMiddle = isDarkTheme
+      ? this.toDarkBackground(edgeColor, 0.28, 0.76)
+      : this.ensureColorfulEnough(this.toPastelBackground(edgeColor, 0.10, 1), edgeColor)
+    const bgBottom = isDarkTheme
+      ? this.toDarkBackground(mixedColor, 0.34, 0.72)
+      : this.ensureColorfulEnough(this.toPastelBackground(mixedColor, 0.20, 0.92), seedColor)
+    const isLightBackground: boolean = this.getLuminance(bgMiddle) > 150
+    const glowSeed = this.toGlowColor(seedColor, isLightBackground)
+    const glowAccent = this.toGlowColor(edgeColor, isLightBackground)
+
+    const theme: CoverPageTheme = {
+      baseColor: isLightBackground ? '#F8FAFB' : '#080A0F',
+      topColor: this.toRgba(bgTop, 1),
+      middleColor: this.toRgba(bgMiddle, 1),
+      bottomColor: this.toRgba(bgBottom, 1),
+      veilColor: isLightBackground ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.06)',
+      glowColor: this.toRgba(glowSeed, 1),
+      glowAccentColor: this.toRgba(glowAccent, 1),
       primaryColor: isLightBackground ? '#202020' : '#FFFFFF',
       secondaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.68)' : 'rgba(255, 255, 255, 0.74)',
       tertiaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.46)' : 'rgba(255, 255, 255, 0.52)',
       progressTrackColor: isLightBackground ? 'rgba(32, 32, 32, 0.18)' : 'rgba(255, 255, 255, 0.24)',
-      shadowColor: isLightBackground
-        ? this.toRgba(mainColor, 0.18)
-        : 'rgba(0, 0, 0, 0.34)'
+      shadowColor: isLightBackground ? this.toRgba(seedColor, 0.20) : 'rgba(0, 0, 0, 0.34)'
     }
+
+    console.info('ThemeColor',
+      `seed=${this.colorToText(seedColor)} top=${theme.topColor} middle=${theme.middleColor} bottom=${theme.bottomColor}`)
+
+    return theme
+  }
+
+  private selectSafeSeedColor(
+    mainColor: CoverThemeRgb,
+    averageColor: CoverThemeRgb,
+    edgeColor: CoverThemeRgb,
+    saturationColor: CoverThemeRgb
+  ): CoverThemeRgb {
+    const candidates: CoverThemeRgb[] = [
+      edgeColor,
+      mainColor,
+      averageColor,
+      this.mixColor(mainColor, edgeColor, 0.35),
+      this.mixColor(averageColor, edgeColor, 0.45)
+    ]
+
+    if (this.isUsableAccentColor(saturationColor)) {
+      candidates.push(saturationColor)
+      candidates.push(this.mixColor(saturationColor, edgeColor, 0.35))
+    }
+
+    let bestColor: CoverThemeRgb = candidates[0]
+    let bestScore: number = -999999
+
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i]
+      const score = this.scoreColorForUi(item, edgeColor)
+      if (score > bestScore) {
+        bestColor = item
+        bestScore = score
+      }
+    }
+
+    return bestColor
+  }
+
+  private isUsableAccentColor(color: CoverThemeRgb): boolean {
+    const luminance: number = this.getLuminance(color)
+    const colorfulness: number = this.getColorfulness(color)
+
+    if (luminance < 70 || luminance > 235) {
+      return false
+    }
+
+    if (colorfulness < 18 || colorfulness > 170) {
+      return false
+    }
+
+    const isDirtyOlive: boolean = color.red < 130 && color.green < 155 && color.blue < 90 &&
+      color.green >= color.blue && color.red >= color.blue
+    return !isDirtyOlive
+  }
+
+  private scoreColorForUi(color: CoverThemeRgb, edgeColor: CoverThemeRgb): number {
+    const luminance: number = this.getLuminance(color)
+    const colorfulness: number = this.getColorfulness(color)
+    const edgeDistance: number = this.colorDistance(color, edgeColor)
+    let score: number = 100
+
+    if (luminance < 45) {
+      score -= 40
+    }
+    if (luminance > 238) {
+      score -= 30
+    }
+    if (colorfulness < 10) {
+      score -= 25
+    }
+    if (colorfulness > 150) {
+      score -= 35
+    }
+    if (this.isSkinLikeColor(color) && edgeDistance > 35) {
+      score -= 45
+    }
+
+    score += Math.max(0, 40 - edgeDistance * 0.4)
+    return score
+  }
+
+  private normalizeSeedColor(seedColor: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
+    let color = seedColor
+    color = this.fixSkinToneCast(color, edgeColor)
+    color = this.fixOverSaturatedColor(color)
+    color = this.fixTooDarkColor(color)
+    color = this.fixTooLightNeutralColor(color, edgeColor)
+    return color
+  }
+
+  private fixSkinToneCast(color: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
+    if (!this.isSkinLikeColor(color)) {
+      return color
+    }
+
+    const edgeLooksPinkOrCool: boolean = edgeColor.red >= edgeColor.green && edgeColor.blue >= edgeColor.green - 12
+    if (!edgeLooksPinkOrCool) {
+      return this.toSoftWarmColor(color)
+    }
+
+    return {
+      red: this.clampColor(color.red - 8),
+      green: this.clampColor(color.green + 12),
+      blue: this.clampColor(color.blue + 38)
+    }
+  }
+
+  private toSoftWarmColor(color: CoverThemeRgb): CoverThemeRgb {
+    return {
+      red: this.clampColor(color.red),
+      green: this.clampColor(color.green + 8),
+      blue: this.clampColor(color.blue + 18)
+    }
+  }
+
+  private fixOverSaturatedColor(color: CoverThemeRgb): CoverThemeRgb {
+    const saturationLike: number = this.getColorfulness(color)
+    if (saturationLike < 90) {
+      return color
+    }
+
+    const gray: number = this.getLuminance(color)
+    return {
+      red: this.clampColor(gray + (color.red - gray) * 0.55),
+      green: this.clampColor(gray + (color.green - gray) * 0.55),
+      blue: this.clampColor(gray + (color.blue - gray) * 0.55)
+    }
+  }
+
+  private fixTooDarkColor(color: CoverThemeRgb): CoverThemeRgb {
+    if (this.getLuminance(color) >= 80) {
+      return color
+    }
+
+    return {
+      red: this.clampColor(color.red + 55),
+      green: this.clampColor(color.green + 55),
+      blue: this.clampColor(color.blue + 55)
+    }
+  }
+
+  private fixTooLightNeutralColor(color: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
+    const isNeutral: boolean = this.getColorfulness(color) < 16
+    if (!isNeutral) {
+      return color
+    }
+
+    if (this.getColorfulness(edgeColor) > 20) {
+      return this.mixColor(color, edgeColor, 0.45)
+    }
+
+    if (this.getLuminance(color) > 180) {
+      return { red: 226, green: 236, blue: 240 }
+    }
+
+    return { red: 72, green: 84, blue: 92 }
+  }
+
+  private toPastelBackground(
+    color: CoverThemeRgb,
+    whiteRatio: number,
+    saturationRatio: number
+  ): CoverThemeRgb {
+    const gray: number = this.getLuminance(color)
+    const preserved: CoverThemeRgb = {
+      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
+      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
+      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
+    }
+
+    return this.mixColor(preserved, { red: 255, green: 255, blue: 255 }, whiteRatio)
+  }
+
+  private toGlowColor(color: CoverThemeRgb, isLightBackground: boolean): CoverThemeRgb {
+    const gray: number = this.getLuminance(color)
+    const saturationRatio: number = isLightBackground ? 0.88 : 0.72
+    const preserved: CoverThemeRgb = {
+      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
+      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
+      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
+    }
+
+    if (isLightBackground) {
+      return this.mixColor(preserved, { red: 255, green: 255, blue: 255 }, 0.08)
+    }
+
+    return this.mixColor(preserved, { red: 32, green: 36, blue: 44 }, 0.18)
+  }
+
+  private toDarkBackground(
+    color: CoverThemeRgb,
+    darkRatio: number,
+    saturationRatio: number
+  ): CoverThemeRgb {
+    const gray: number = this.getLuminance(color)
+    const preserved: CoverThemeRgb = {
+      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
+      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
+      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
+    }
+
+    return this.mixColor(preserved, { red: 24, green: 28, blue: 34 }, darkRatio)
+  }
+
+  private ensureColorfulEnough(color: CoverThemeRgb, seedColor: CoverThemeRgb): CoverThemeRgb {
+    const minColorfulness: number = 24
+
+    if (this.getColorfulness(color) >= minColorfulness) {
+      return color
+    }
+
+    const boostedColor = this.mixColor(color, seedColor, 0.46)
+    if (this.getColorfulness(boostedColor) >= minColorfulness) {
+      return boostedColor
+    }
+
+    return this.mixColor(color, seedColor, 0.68)
+  }
+
+  private mixColor(a: CoverThemeRgb, b: CoverThemeRgb, ratio: number): CoverThemeRgb {
+    const safeRatio: number = Math.max(0, Math.min(1, ratio))
+    return {
+      red: this.clampColor(a.red * (1 - safeRatio) + b.red * safeRatio),
+      green: this.clampColor(a.green * (1 - safeRatio) + b.green * safeRatio),
+      blue: this.clampColor(a.blue * (1 - safeRatio) + b.blue * safeRatio)
+    }
+  }
+
+  private getColorfulness(color: CoverThemeRgb): number {
+    return Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue)
+  }
+
+  private isSkinLikeColor(color: CoverThemeRgb): boolean {
+    const red: number = color.red
+    const green: number = color.green
+    const blue: number = color.blue
+    return red > 190 && green > 115 && blue > 75 && red > green && green > blue && red - blue > 45 &&
+      green - blue > 18
+  }
+
+  private colorDistance(a: CoverThemeRgb, b: CoverThemeRgb): number {
+    const redDiff: number = a.red - b.red
+    const greenDiff: number = a.green - b.green
+    const blueDiff: number = a.blue - b.blue
+    return Math.sqrt(redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff)
   }
 
   private isUsableThemeColor(color: CoverThemeRgb | null | undefined): boolean {
@@ -348,6 +711,10 @@ export struct NowPlayingView {
   private toRgba(color: CoverThemeRgb, alpha: number): string {
     const normalizedAlpha: number = Math.max(0, Math.min(1, alpha))
     return `rgba(${this.clampColor(color.red)}, ${this.clampColor(color.green)}, ${this.clampColor(color.blue)}, ${normalizedAlpha})`
+  }
+
+  private colorToText(color: CoverThemeRgb): string {
+    return `rgb(${this.clampColor(color.red)}, ${this.clampColor(color.green)}, ${this.clampColor(color.blue)})`
   }
 
   private hexToRgb(color: string): CoverThemeRgb {
@@ -2408,25 +2775,39 @@ export struct NowPlayingView {
             angle: 160,
             colors: [
               [this.coverBackdropTopColor, 0.0],
-              [this.coverBackdropMiddleColor, 0.48],
+              [this.coverBackdropMiddleColor, 0.46],
               [this.coverBackdropBottomColor, 1.0]
             ]
           })
           .opacity(this.getBgOpacity())
           .animation({ duration: 800, curve: Curve.EaseInOut })
 
+        Ellipse()
+          .width(this.getOverlayScreenWidth() * 1.18)
+          .height(this.getOverlayScreenWidth() * 0.78)
+          .fill(this.coverBackdropGlowColor)
+          .opacity(this.getBgOpacity() * 0.22)
+          .blur(72)
+          .offset({
+            x: -this.getOverlayScreenWidth() * 0.22,
+            y: -this.getOverlayScreenHeight() * 0.25
+          })
+
+        Ellipse()
+          .width(this.getOverlayScreenWidth() * 0.96)
+          .height(this.getOverlayScreenWidth() * 0.70)
+          .fill(this.coverBackdropAccentGlowColor)
+          .opacity(this.getBgOpacity() * 0.16)
+          .blur(78)
+          .offset({
+            x: this.getOverlayScreenWidth() * 0.24,
+            y: this.getOverlayScreenHeight() * 0.16
+          })
+
         Column()
           .width('100%')
           .height('100%')
-          .linearGradient({
-            angle: 180,
-            colors: [
-              [this.withAlpha(this.coverPagePrimaryColor, 0.05), 0.0],
-              [this.withAlpha(this.coverPagePrimaryColor, 0.00), 0.34],
-              [this.withAlpha(this.coverPagePrimaryColor, 0.00), 0.70],
-              [this.withAlpha(this.coverPagePrimaryColor, 0.08), 1.0]
-            ]
-          })
+          .backgroundColor(this.coverBackdropVeilColor)
           .opacity(this.getBgOpacity())
       }
       .width('100%')

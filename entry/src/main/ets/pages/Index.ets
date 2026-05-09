@@ -6,7 +6,6 @@ import { NowPlayingView } from '../components/NowPlayingView'
 import { MiniPlayer } from '../components/MiniPlayer'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 import { image } from '@kit.ImageKit'
-import { effectKit } from '@kit.ArkGraphics2D'
 import { PlayerService } from '../service/PlayerService'
 import { AudioPicker } from '../service/AudioPicker'
 import { PlaylistManager } from '../service/PlaylistManager'
@@ -63,21 +62,11 @@ struct Index {
     this.clearNowPlayingOpenTask()
   }
 
-  private async syncCover(): Promise<void> {
+  private syncCover(): void {
     const pm = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
     this.coverPixelMap = pm ? pm as image.PixelMap : null
 
-    if (this.coverPixelMap) {
-      try {
-        const colorPicker = await effectKit.createColorPicker(this.coverPixelMap)
-        const color = colorPicker.getMainColorSync()
-        const colorString = `rgba(${color.red}, ${color.green}, ${color.blue}, 1.0)`
-        AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, colorString)
-      } catch (e) {
-        console.error('取色失败', e)
-        AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, Colors.DEFAULT_DOMINANT_COLOR)
-      }
-    } else {
+    if (!this.coverPixelMap) {
       AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, Colors.DEFAULT_DOMINANT_COLOR)
     }
   }

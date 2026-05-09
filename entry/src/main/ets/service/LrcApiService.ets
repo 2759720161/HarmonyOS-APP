@@ -326,9 +326,16 @@ export class LrcApiService {
       const buffer = response.result as ArrayBuffer
       if (buffer.byteLength > 0) {
         const imageSource = image.createImageSource(buffer)
-        const pixelMap = await imageSource.createPixelMap()
-        imageSource.release()
-        return pixelMap
+        try {
+          return await imageSource.createPixelMap({
+            desiredSize: {
+              width: 720,
+              height: 720
+            }
+          })
+        } finally {
+          imageSource.release()
+        }
       }
     }
 

@@ -1,7 +1,7 @@
 import { media } from '@kit.MediaKit'
 import { image } from '@kit.ImageKit'
 import { fileIo } from '@kit.CoreFileKit'
-import effectKit from '@ohos.effectKit'
+import { effectKit } from '@kit.ArkGraphics2D'
 import { Colors, StorageKeys } from '../common/Constants'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 
@@ -51,10 +51,22 @@ export class AudioScanner {
 
   private static async applyCurrentCover(pixelMap: image.PixelMap | null): Promise<void> {
     if (pixelMap) {
-      GlobalContext.getInstance().set(GCKeys.CURRENT_COVER, pixelMap)
+      let coverPixelMap: image.PixelMap = pixelMap
+      try {
+        coverPixelMap = await AudioScanner.createDisplayPixelMap(pixelMap)
+      } catch (err) {
+        console.error('AudioScanner', `封面缩放失败: ${JSON.stringify(err)}`)
+      }
+
+      GlobalContext.getInstance().set(GCKeys.CURRENT_COVER, coverPixelMap)
+      let samplePixelMap: image.PixelMap | null = null
+      let shouldReleaseSample: boolean = false
       try {
         // 使用 effectKit 提取主色调
-        const colorPicker = await effectKit.createColorPicker(pixelMap)
+        const sampledPixelMap = await AudioScanner.createThemePixelMap(coverPixelMap)
+        samplePixelMap = sampledPixelMap
+        shouldReleaseSample = sampledPixelMap !== coverPixelMap
+        const colorPicker = await effectKit.createColorPicker(sampledPixelMap)
         const mainColor = colorPicker.getMainColorSync()
         if (mainColor) {
           const r = mainColor.red.toString(16).padStart(2, '0')
@@ -67,6 +79,10 @@ export class AudioScanner {
       } catch (err) {
         console.error('AudioScanner', `取色失败: ${JSON.stringify(err)}`)
         AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, Colors.DEFAULT_DOMINANT_COLOR)
+      } finally {
+        if (shouldReleaseSample && samplePixelMap) {
+          samplePixelMap.release()
+        }
       }
     } else {
       GlobalContext.getInstance().delete(GCKeys.CURRENT_COVER)
@@ -74,5 +90,35 @@ export class AudioScanner {
     }
     const version: number = AppStorage.get<number>(StorageKeys.COVER_VERSION) ?? 0
     AppStorage.setOrCreate(StorageKeys.COVER_VERSION, version + 1)
+  }
+
+  private static async createThemePixelMap(pixelMap: image.PixelMap): Promise<image.PixelMap> {
+    const imageInfo = await pixelMap.getImageInfo()
+    const width: number = Math.max(1, imageInfo.size.width)
+    const height: number = Math.max(1, imageInfo.size.height)
+    const maxSide: number = Math.max(width, height)
+    const sampleSize: number = 96
+
+    if (maxSide <= sampleSize) {
+      return pixelMap
+    }
+
+    const scale: number = sampleSize / maxSide
+    return await pixelMap.createScaledPixelMap(scale, scale)
+  }
+
+  private static async createDisplayPixelMap(pixelMap: image.PixelMap): Promise<image.PixelMap> {
+    const imageInfo = await pixelMap.getImageInfo()
+    const width: number = Math.max(1, imageInfo.size.width)
+    const height: number = Math.max(1, imageInfo.size.height)
+    const maxSide: number = Math.max(width, height)
+    const displaySize: number = 720
+
+    if (maxSide <= displaySize) {
+      return pixelMap
+    }
+
+    const scale: number = displaySize / maxSide
+    return await pixelMap.createScaledPixelMap(scale, scale)
   }
 }
