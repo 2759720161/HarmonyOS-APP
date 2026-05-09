@@ -55,7 +55,7 @@ export struct NowPlayingView {
   @StorageLink('lyricLines') lyricLines: LyricLine[] = []
   @StorageLink('lyricIndex') lyricIndex: number = -1
   @StorageLink('favoriteIds') favoriteIdsStr: string = '[]'
-  @StorageLink('nowPlayingOverlayActive') nowPlayingOverlayActive: boolean = false
+  @StorageLink('modalOverlayActive') modalOverlayActive: boolean = false
   @StorageLink('immersiveModeActive') immersiveModeActive: boolean = false
   @StorageLink('immersiveModeProgress') immersiveModeProgress: number = 0
 
@@ -81,17 +81,16 @@ export struct NowPlayingView {
     return distance * (1 - Math.min(1, (p - threshold) / (1 - threshold)))
   }
 
-  // 背景在形变阶段（p<0.40）保持透明，让 MiniPlayer 的形变卡片占据视觉；
-  // 0.40 → 0.85 之间快速淡入到不透明，与 MiniPlayer 卡片背景的淡出衔接
+  // 背景提前接管，避免 MiniPlayer shell 淡出前后出现透明空档。
   private getBgOpacity(): number {
-    const p = this.expandProgress
-    if (p <= 0.40) {
+    const p = Math.max(0, Math.min(1, this.expandProgress))
+    if (p <= 0.20) {
       return 0
     }
-    if (p >= 0.85) {
+    if (p >= 0.75) {
       return 1
     }
-    return (p - 0.40) / 0.45
+    return (p - 0.20) / 0.55
   }
 
   @State private coverPixelMap: image.PixelMap | null = null
@@ -178,7 +177,7 @@ export struct NowPlayingView {
 
   aboutToAppear(): void {
     this.setSharedMorphHidden(false)
-    this.setNowPlayingOverlayActive(false)
+    this.setModalOverlayActive(false)
     this.setImmersiveModeState(false, 0)
     this.coverLyricPageIndex = this.coverPageIndex
     this.emitLyricsProgress(0)
@@ -197,8 +196,8 @@ export struct NowPlayingView {
     AppStorage.setOrCreate(StorageKeys.DETAIL_DIALOG_VISIBLE, hidden)
   }
 
-  private setNowPlayingOverlayActive(active: boolean): void {
-    AppStorage.setOrCreate(StorageKeys.NOW_PLAYING_OVERLAY_ACTIVE, active)
+  private setModalOverlayActive(active: boolean): void {
+    AppStorage.setOrCreate(StorageKeys.MODAL_OVERLAY_ACTIVE, active)
   }
 
   private setImmersiveModeState(active: boolean, progress: number): void {
@@ -206,10 +205,10 @@ export struct NowPlayingView {
     AppStorage.setOrCreate(StorageKeys.IMMERSIVE_MODE_PROGRESS, Math.max(0, Math.min(1, progress)))
   }
 
-  private restoreNowPlayingOverlayWhenIdle(): void {
+  private restoreModalOverlayWhenIdle(): void {
     if (!this.isMoreSheetVisible && !this.isOnlineSearchPopupVisible && !this.isDetailDialogVisible &&
       !this.isApiSettingsDialogVisible && !this.isDeleteDialogVisible) {
-      this.setNowPlayingOverlayActive(false)
+      this.setModalOverlayActive(false)
     }
   }
 
@@ -817,7 +816,7 @@ export struct NowPlayingView {
     this.clearDetailDialogHideTask()
     this.clearApiSettingsDialogHideTask()
     this.clearDeleteDialogHideTask()
-    this.setNowPlayingOverlayActive(true)
+    this.setModalOverlayActive(true)
     this.isMoreSheetVisible = true
     this.moreSheetProgress = 0
     this.sheetDragOffsetY = 0
@@ -854,7 +853,7 @@ export struct NowPlayingView {
       this.isOnlineSearchPopupVisible = false
       this.isDetailDialogVisible = false
       this.setSharedMorphHidden(false)
-      this.setNowPlayingOverlayActive(false)
+      this.setModalOverlayActive(false)
       this.isApiSettingsDialogVisible = false
       this.isDeleteDialogVisible = false
       this.isDeletingSong = false
@@ -953,7 +952,7 @@ export struct NowPlayingView {
 
   private openOnlineSearchPopup(): void {
     this.clearOnlineSearchPopupHideTask()
-    this.setNowPlayingOverlayActive(true)
+    this.setModalOverlayActive(true)
     this.isOnlineSearchPopupVisible = true
     this.onlineSearchPopupProgress = 0
     animateTo({
@@ -978,7 +977,7 @@ export struct NowPlayingView {
     })
     this.onlineSearchPopupHideTask = setTimeout(() => {
       this.isOnlineSearchPopupVisible = false
-      this.restoreNowPlayingOverlayWhenIdle()
+      this.restoreModalOverlayWhenIdle()
       this.activeOnlineSearchItem = ''
       this.onlineSearchPopupHideTask = -1
     }, this.onlineSearchAnimationDuration) as number
@@ -987,7 +986,7 @@ export struct NowPlayingView {
   private openDetailDialog(): void {
     this.hideOnlineSearchPopupImmediately()
     this.clearDetailDialogHideTask()
-    this.setNowPlayingOverlayActive(true)
+    this.setModalOverlayActive(true)
     this.isDetailDialogVisible = true
     this.detailDialogProgress = 0
     animateTo({
@@ -1012,7 +1011,7 @@ export struct NowPlayingView {
     })
     this.detailDialogHideTask = setTimeout(() => {
       this.isDetailDialogVisible = false
-      this.restoreNowPlayingOverlayWhenIdle()
+      this.restoreModalOverlayWhenIdle()
       this.detailDialogHideTask = -1
     }, this.detailDialogAnimationDuration) as number
   }
@@ -1020,7 +1019,7 @@ export struct NowPlayingView {
   private openDeleteDialog(): void {
     this.hideOnlineSearchPopupImmediately()
     this.clearDeleteDialogHideTask()
-    this.setNowPlayingOverlayActive(true)
+    this.setModalOverlayActive(true)
     this.isDeleteDialogVisible = true
     this.deleteDialogProgress = 0
     animateTo({
@@ -1045,7 +1044,7 @@ export struct NowPlayingView {
     })
     this.deleteDialogHideTask = setTimeout(() => {
       this.isDeleteDialogVisible = false
-      this.restoreNowPlayingOverlayWhenIdle()
+      this.restoreModalOverlayWhenIdle()
       this.isDeletingSong = false
       this.deleteDialogHideTask = -1
     }, this.deleteDialogAnimationDuration) as number
@@ -1073,7 +1072,7 @@ export struct NowPlayingView {
   private openApiSettingsDialog(): void {
     this.hideOnlineSearchPopupImmediately()
     this.clearApiSettingsDialogHideTask()
-    this.setNowPlayingOverlayActive(true)
+    this.setModalOverlayActive(true)
     const currentSettings = new LrcApiSettings(
       this.lyricApiUrl.length > 0 ? this.lyricApiUrl : this.lrcApiConfigService.getDefaultSettings().lyricsApiUrl,
       this.lyricApiKey,
@@ -1116,7 +1115,7 @@ export struct NowPlayingView {
     })
     this.apiSettingsDialogHideTask = setTimeout(() => {
       this.isApiSettingsDialogVisible = false
-      this.restoreNowPlayingOverlayWhenIdle()
+      this.restoreModalOverlayWhenIdle()
       if (commit) {
         this.retryPendingOnlineSearch()
       } else {
@@ -2435,9 +2434,35 @@ export struct NowPlayingView {
 
   @Builder
   private CoverCard() {
-    Column()
+    Stack() {
+      if (this.coverPixelMap) {
+        Image(this.coverPixelMap)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+      } else {
+        Column() {
+          SymbolGlyph($r('sys.symbol.music'))
+            .fontSize(120)
+            .fontColor([this.coverPageSecondaryColor])
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.mini_player_placeholder'))
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      }
+    }
       .width(this.getOverlayCoverSize())
       .height(this.getOverlayCoverSize())
+      .borderRadius(18)
+      .clip(true)
+      .shadow({
+        radius: 24,
+        color: this.getCoverShadowColor(),
+        offsetX: 0,
+        offsetY: 12
+      })
   }
 
   @Builder
@@ -2861,7 +2886,7 @@ export struct NowPlayingView {
         })
       }
 
-      if (this.nowPlayingOverlayActive && !this.isLyricsPageVisible()) {
+      if (this.modalOverlayActive && !this.isLyricsPageVisible()) {
         this.OverlayMorphLayer()
       }
 

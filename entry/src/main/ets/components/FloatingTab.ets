@@ -1,4 +1,4 @@
-import { Colors, StorageKeys } from '../common/Constants'
+import { Colors } from '../common/Constants'
 
 @Component
 export struct FloatingTab {
@@ -61,9 +61,7 @@ export struct FloatingTab {
         .onClick(() => {
           const tabChange = this.onTabChange
           if (this.currentTab !== index && tabChange) {
-            animateTo({ duration: 250, curve: Curve.EaseInOut }, () => {
-              tabChange(index)
-            })
+            tabChange(index)
           }
         })
       }, (tabName: string, index: number) => `${index}`)

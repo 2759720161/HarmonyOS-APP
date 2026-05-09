@@ -38,7 +38,7 @@ export class StorageKeys {
   static readonly FAVORITE_COUNT: string = 'favoriteCount'
   static readonly CURRENT_TAB: string = 'currentTab'
   static readonly DETAIL_DIALOG_VISIBLE: string = 'detailDialogVisible'
-  static readonly NOW_PLAYING_OVERLAY_ACTIVE: string = 'nowPlayingOverlayActive'
+  static readonly MODAL_OVERLAY_ACTIVE: string = 'modalOverlayActive'
   static readonly IMMERSIVE_MODE_ACTIVE: string = 'immersiveModeActive'
   static readonly IMMERSIVE_MODE_PROGRESS: string = 'immersiveModeProgress'
 }

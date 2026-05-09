@@ -27,8 +27,8 @@ struct Index {
   @StorageLink('dominantColor') dominantColor: string = Colors.DEFAULT_DOMINANT_COLOR
   @StorageLink('songCount') songCount: number = 0
   @StorageLink('currentTab') currentTab: number = 0
-  @StorageLink('nowPlayingOverlayActive') nowPlayingOverlayActive: boolean = false
 
+  @State private showNowPlaying: boolean = false
   @State private nowPlayingProgress: number = 0
   @State private coverPixelMap: image.PixelMap | null = null
   @State private isLoading: boolean = false
@@ -41,13 +41,13 @@ struct Index {
   private readonly openContentDuration: number = 360
   private readonly openSettleProgress: number = 0.60
   private readonly closeDuration: number = 340
-  private readonly openMountProgress: number = 0.002
+  private readonly tabSwitchDuration: number = 250
   private nowPlayingHideTask: number = -1
   private nowPlayingOpenTask: number = -1
   private readonly dragThreshold: number = 300
 
   aboutToAppear(): void {
-    AppStorage.setOrCreate(StorageKeys.NOW_PLAYING_OVERLAY_ACTIVE, false)
+    AppStorage.setOrCreate(StorageKeys.MODAL_OVERLAY_ACTIVE, false)
     AppStorage.setOrCreate(StorageKeys.IMMERSIVE_MODE_ACTIVE, false)
     AppStorage.setOrCreate(StorageKeys.IMMERSIVE_MODE_PROGRESS, 0)
     const count: number = AppStorage.get<number>(StorageKeys.SONG_COUNT) ?? 0
@@ -148,7 +148,7 @@ struct Index {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else {
-        if (this.currentTab === 0) {
+        Stack() {
           SongListView({
             onSelectMusic: () => {
               this.pickAudioFiles()
@@ -156,11 +156,21 @@ struct Index {
           })
             .width('100%')
             .height('100%')
-        } else {
+            .opacity(this.currentTab === 0 ? 1 : 0)
+            .translate({ x: this.currentTab === 0 ? 0 : -24, y: 0 })
+            .hitTestBehavior(this.currentTab === 0 ? HitTestMode.Default : HitTestMode.None)
+            .zIndex(this.currentTab === 0 ? 1 : 0)
+
           FavoriteView()
             .width('100%')
             .height('100%')
+            .opacity(this.currentTab === 1 ? 1 : 0)
+            .translate({ x: this.currentTab === 1 ? 0 : 24, y: 0 })
+            .hitTestBehavior(this.currentTab === 1 ? HitTestMode.Default : HitTestMode.None)
+            .zIndex(this.currentTab === 1 ? 1 : 0)
         }
+        .width('100%')
+        .height('100%')
       }
     }
     .width('100%')
@@ -181,6 +191,15 @@ struct Index {
     }
   }
 
+  private scheduleNowPlayingUnmount(): void {
+    this.clearNowPlayingHideTask()
+    this.nowPlayingHideTask = setTimeout(() => {
+      this.lyricsProgress = 0
+      this.showNowPlaying = false
+      this.nowPlayingHideTask = -1
+    }, this.closeDuration) as number
+  }
+
   private canOpenNowPlaying(): boolean {
     return this.currentIndex >= 0 && this.currentTitle.length > 0
   }
@@ -189,12 +208,35 @@ struct Index {
     return Math.max(0, Math.min(1, value))
   }
 
+  private switchTab(tabIndex: number): void {
+    if (this.currentTab === tabIndex) {
+      return
+    }
+
+    animateTo({
+      duration: this.tabSwitchDuration,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.currentTab = tabIndex
+    })
+  }
+
   private updateMiniSwipe(offsetY: number): void {
     if (!this.canOpenNowPlaying()) {
       return
     }
 
     this.clearNowPlayingOpenTask()
+    this.clearNowPlayingHideTask()
+
+    if (!this.showNowPlaying && offsetY >= 0) {
+      this.nowPlayingProgress = 0
+      return
+    }
+
+    if (!this.showNowPlaying) {
+      this.showNowPlaying = true
+    }
 
     if (offsetY < 0) {
       this.nowPlayingProgress = this.clampProgress(Math.abs(offsetY) / this.dragThreshold)
@@ -232,7 +274,8 @@ struct Index {
     this.clearNowPlayingHideTask()
 
     if (this.nowPlayingProgress <= 0.001) {
-      this.nowPlayingProgress = this.openMountProgress
+      this.showNowPlaying = true
+      this.nowPlayingProgress = 0
       this.nowPlayingOpenTask = setTimeout(() => {
         this.nowPlayingOpenTask = -1
         this.animateOpenNowPlaying()
@@ -240,25 +283,24 @@ struct Index {
       return
     }
 
+    this.showNowPlaying = true
     this.animateOpenNowPlaying()
   }
 
   private closeNowPlaying(): void {
-    if (this.nowPlayingProgress <= 0) {
+    if (!this.showNowPlaying && this.nowPlayingProgress <= 0) {
       return
     }
     this.clearNowPlayingOpenTask()
     this.clearNowPlayingHideTask()
+    this.showNowPlaying = true
     animateTo({
       duration: this.closeDuration,
       curve: Curve.EaseInOut
     }, () => {
       this.nowPlayingProgress = 0
     })
-    this.nowPlayingHideTask = setTimeout(() => {
-      this.lyricsProgress = 0
-      this.nowPlayingHideTask = -1
-    }, this.closeDuration) as number
+    this.scheduleNowPlayingUnmount()
   }
 
   private snapNowPlaying(velocityY: number): void {
@@ -269,38 +311,40 @@ struct Index {
 
     if (shouldOpen && !shouldClose) {
       this.clearNowPlayingHideTask()
+      this.showNowPlaying = true
       animateTo({ duration: this.openDuration, curve: Curve.EaseOut }, () => {
         this.nowPlayingProgress = 1
       })
     } else if (shouldClose && !shouldOpen) {
       this.clearNowPlayingHideTask()
+      this.showNowPlaying = true
       animateTo({ duration: this.closeDuration, curve: Curve.EaseInOut }, () => {
         this.nowPlayingProgress = 0
       })
-      this.nowPlayingHideTask = setTimeout(() => {
-        this.lyricsProgress = 0
-        this.nowPlayingHideTask = -1
-      }, this.closeDuration) as number
+      this.scheduleNowPlayingUnmount()
     } else if (p >= 0.5) {
       this.clearNowPlayingHideTask()
+      this.showNowPlaying = true
       animateTo({ duration: this.openDuration, curve: Curve.EaseOut }, () => {
         this.nowPlayingProgress = 1
       })
     } else {
       this.clearNowPlayingHideTask()
+      this.showNowPlaying = true
       animateTo({ duration: this.closeDuration, curve: Curve.EaseInOut }, () => {
         this.nowPlayingProgress = 0
       })
-      this.nowPlayingHideTask = setTimeout(() => {
-        this.lyricsProgress = 0
-        this.nowPlayingHideTask = -1
-      }, this.closeDuration) as number
+      this.scheduleNowPlayingUnmount()
     }
   }
 
   onBackPress(): boolean | void {
-    if (this.nowPlayingProgress > 0.01) {
+    if (this.showNowPlaying || this.nowPlayingProgress > 0.01) {
       this.closeNowPlaying()
+      return true
+    }
+    if (this.currentTab !== 0) {
+      this.switchTab(0)
       return true
     }
     return false
@@ -332,14 +376,14 @@ struct Index {
   }
 
   private shouldShowFloatingTab(): boolean {
-    return this.songCount > 0 && this.nowPlayingProgress < 0.05
+    return this.songCount > 0 && !this.showNowPlaying && this.nowPlayingProgress <= 0.001
   }
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       this.PageContentBuilder()
 
-      if (this.nowPlayingProgress > 0.001) {
+      if (this.showNowPlaying) {
         Stack({ alignContent: Alignment.Bottom }) {
           this.NowPlayingBuilder()
         }
@@ -347,16 +391,16 @@ struct Index {
         .height('100%')
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .clip(true)
-        .hitTestBehavior(this.nowPlayingProgress < 0.85 ? HitTestMode.None : HitTestMode.Default)
-        .zIndex(this.nowPlayingOverlayActive ? 30 : 0)
+        .hitTestBehavior(HitTestMode.Default)
+        .zIndex(30)
       }
 
       Column() {
         this.MiniPlayerFloatingNav()
       }
       .width('100%')
-      .hitTestBehavior(this.nowPlayingProgress > 0.05 ? HitTestMode.Transparent : HitTestMode.Default)
-      .zIndex(this.nowPlayingOverlayActive ? 10 : 20)
+      .hitTestBehavior(this.showNowPlaying ? HitTestMode.Transparent : HitTestMode.Default)
+      .zIndex(this.showNowPlaying ? 20 : 30)
 
       if (this.shouldShowFloatingTab()) {
         Column() {
@@ -365,7 +409,7 @@ struct Index {
             dominantColor: this.dominantColor,
             isDarkMode: this.isDarkMode,
             onTabChange: (tabIndex: number) => {
-              this.currentTab = tabIndex
+              this.switchTab(tabIndex)
             }
           })
         }
@@ -375,6 +419,7 @@ struct Index {
           right: 18,
           bottom: this.bottomSafeHeight + 24
         })
+        .zIndex(40)
       }
     }
     .width('100%')
