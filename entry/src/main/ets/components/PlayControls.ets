@@ -8,6 +8,9 @@ export struct PlayControls {
   @StorageLink('dominantColor') dominantColor: string = Colors.DEFAULT_DOMINANT_COLOR
   @Prop bottomSafe: number = 0
   @Prop immersiveProgress: number = 0
+  @Prop primaryColor: string = '#1B2554'
+  @Prop secondaryColor: string = '#6A7397'
+  @Prop accentColor: string = Colors.DEFAULT_DOMINANT_COLOR
   onMoreClick?: () => void
 
   private getImmersiveProgress(): number {
@@ -46,6 +49,10 @@ export struct PlayControls {
     return 50
   }
 
+  private getAccentColor(): string {
+    return this.accentColor.length > 0 ? this.accentColor : this.dominantColor
+  }
+
   @Builder
   private MoreIcon() {
     Column({ space: 5 }) {
@@ -53,7 +60,7 @@ export struct PlayControls {
         Circle()
           .width(4)
           .height(4)
-          .fill($r('app.color.now_playing_secondary_icon'))
+          .fill(this.secondaryColor)
       }, (item: number) => item.toString())
     }
     .width(20)
@@ -68,19 +75,19 @@ export struct PlayControls {
       Row()
         .width(22)
         .height(2)
-        .backgroundColor($r('app.color.now_playing_secondary_icon'))
+        .backgroundColor(this.secondaryColor)
         .borderRadius(1)
 
       Row()
         .width(22)
         .height(2)
-        .backgroundColor($r('app.color.now_playing_secondary_icon'))
+        .backgroundColor(this.secondaryColor)
         .borderRadius(1)
 
       Row()
         .width(14)
         .height(2)
-        .backgroundColor($r('app.color.now_playing_secondary_icon'))
+        .backgroundColor(this.secondaryColor)
         .borderRadius(1)
     }
     .width(24)
@@ -95,7 +102,7 @@ export struct PlayControls {
         Button({ type: ButtonType.Normal, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.backward_end_fill'))
             .fontSize(this.getSideIconSize())
-            .fontColor([$r('app.color.now_playing_primary_icon')])
+            .fontColor([this.primaryColor])
         }
         .width(this.getSideButtonSize())
         .height(this.getSideButtonSize())
@@ -108,7 +115,7 @@ export struct PlayControls {
         Button({ type: ButtonType.Normal, stateEffect: true }) {
           SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
             .fontSize(this.getCenterIconSize())
-            .fontColor([$r('app.color.now_playing_primary_icon')])
+            .fontColor([this.primaryColor])
         }
         .width(this.getCenterButtonSize())
         .height(this.getCenterButtonSize())
@@ -121,7 +128,7 @@ export struct PlayControls {
         Button({ type: ButtonType.Normal, stateEffect: true }) {
           SymbolGlyph($r('sys.symbol.forward_end_fill'))
             .fontSize(this.getSideIconSize())
-            .fontColor([$r('app.color.now_playing_primary_icon')])
+            .fontColor([this.primaryColor])
         }
         .width(this.getSideButtonSize())
         .height(this.getSideButtonSize())
@@ -153,8 +160,8 @@ export struct PlayControls {
           SymbolGlyph(getPlayModeIcon(this.playMode as PlayMode))
             .fontSize(28)
             .fontColor([this.playMode === PlayMode.SEQUENCE
-              ? $r('app.color.now_playing_secondary_icon')
-              : this.dominantColor])
+              ? this.secondaryColor
+              : this.getAccentColor()])
         }
         .width(96)
         .height(40)

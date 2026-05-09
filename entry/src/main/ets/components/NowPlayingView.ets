@@ -1,4 +1,5 @@
 import { image } from '@kit.ImageKit'
+import { effectKit } from '@kit.ArkGraphics2D'
 import { fileIo } from '@kit.CoreFileKit'
 import promptAction from '@ohos.promptAction'
 import { Colors, formatMs, StorageKeys } from '../common/Constants'
@@ -12,6 +13,26 @@ import { LrcApiCoverResult, LrcApiService } from '../service/LrcApiService'
 import { PlayControls } from './PlayControls'
 import { LyricView } from './LyricView'
 import { LyricLine } from '../service/LyricParser'
+
+interface CoverThemeRgb {
+  red: number
+  green: number
+  blue: number
+}
+
+interface CoverPageTheme {
+  baseColor: string
+  topColor: string
+  middleColor: string
+  bottomColor: string
+  primaryColor: string
+  secondaryColor: string
+  tertiaryColor: string
+  progressTrackColor: string
+  shadowColor: string
+}
+
+const CoverPageThemeCache: Map<string, CoverPageTheme> = new Map<string, CoverPageTheme>()
 
 @Component
 export struct NowPlayingView {
@@ -71,6 +92,15 @@ export struct NowPlayingView {
   }
 
   @State private coverPixelMap: image.PixelMap | null = null
+  @State private coverBackdropBaseColor: string = '#F8FAFB'
+  @State private coverBackdropTopColor: string = 'rgba(123, 127, 255, 0.18)'
+  @State private coverBackdropMiddleColor: string = 'rgba(123, 127, 255, 0.12)'
+  @State private coverBackdropBottomColor: string = 'rgba(255, 255, 255, 0.20)'
+  @State private coverPagePrimaryColor: string = '#202020'
+  @State private coverPageSecondaryColor: string = 'rgba(32, 32, 32, 0.68)'
+  @State private coverPageTertiaryColor: string = 'rgba(32, 32, 32, 0.46)'
+  @State private coverPageProgressTrackColor: string = 'rgba(32, 32, 32, 0.18)'
+  @State private coverPageShadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @State private isSeeking: boolean = false
   @State private seekValue: number = 0
   @State private progressPercent: number = 0
@@ -138,6 +168,7 @@ export struct NowPlayingView {
   private apiSettingsDialogHideTask: number = -1
   private deleteDialogHideTask: number = -1
   private immersiveModeHideTask: number = -1
+  private coverThemeTaskToken: number = 0
 
   aboutToAppear(): void {
     this.setSharedMorphHidden(false)
@@ -185,6 +216,158 @@ export struct NowPlayingView {
   private syncCover(): void {
     const pixelMap = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
     this.coverPixelMap = pixelMap ? pixelMap as image.PixelMap : null
+    this.coverThemeTaskToken += 1
+    void this.updateCoverPageTheme(this.coverPixelMap, this.coverThemeTaskToken)
+  }
+
+  private async updateCoverPageTheme(pixelMap: image.PixelMap | null, taskToken: number): Promise<void> {
+    if (!pixelMap) {
+      this.applyCoverPageTheme(this.getFallbackCoverPageTheme())
+      return
+    }
+
+    const cacheKey: string = this.getCoverThemeCacheKey()
+    const cachedTheme = CoverPageThemeCache.get(cacheKey)
+    if (cachedTheme) {
+      this.applyCoverPageTheme(cachedTheme)
+      return
+    }
+
+    try {
+      const colorPicker = await effectKit.createColorPicker(pixelMap)
+      if (taskToken !== this.coverThemeTaskToken) {
+        return
+      }
+
+      const mainColor = colorPicker.getMainColorSync() as CoverThemeRgb
+      const averageColor = colorPicker.getAverageColor() as CoverThemeRgb
+      const saturationColor = colorPicker.getHighestSaturationColor() as CoverThemeRgb
+      const safeMainColor = this.isUsableThemeColor(mainColor) ? mainColor : this.hexToRgb(Colors.DEFAULT_DOMINANT_COLOR)
+      const safeAverageColor = this.isUsableThemeColor(averageColor) ? averageColor : safeMainColor
+      const safeSaturationColor = this.isUsableThemeColor(saturationColor) ? saturationColor : safeMainColor
+      const theme = this.buildCoverPageTheme(safeMainColor, safeAverageColor, safeSaturationColor)
+
+      CoverPageThemeCache.set(cacheKey, theme)
+      this.applyCoverPageTheme(theme)
+    } catch (error) {
+      console.error('NowPlayingView', `Cover theme extraction failed: ${JSON.stringify(error)}`)
+      this.applyCoverPageTheme(this.getFallbackCoverPageTheme())
+    }
+  }
+
+  private getCoverThemeCacheKey(): string {
+    const song = this.getCurrentSong()
+    if (song) {
+      if (song.coverUri.length > 0) {
+        return `cover:${song.coverUri}`
+      }
+      if (song.id.length > 0) {
+        return `song:${song.id}`
+      }
+      if (song.uri.length > 0) {
+        return `uri:${song.uri}`
+      }
+    }
+    return `version:${this.coverVersion}`
+  }
+
+  private applyCoverPageTheme(theme: CoverPageTheme): void {
+    this.coverBackdropBaseColor = theme.baseColor
+    this.coverBackdropTopColor = theme.topColor
+    this.coverBackdropMiddleColor = theme.middleColor
+    this.coverBackdropBottomColor = theme.bottomColor
+    this.coverPagePrimaryColor = theme.primaryColor
+    this.coverPageSecondaryColor = theme.secondaryColor
+    this.coverPageTertiaryColor = theme.tertiaryColor
+    this.coverPageProgressTrackColor = theme.progressTrackColor
+    this.coverPageShadowColor = theme.shadowColor
+    AppStorage.setOrCreate(StorageKeys.COVER_THEME_PRIMARY_COLOR, theme.primaryColor)
+    AppStorage.setOrCreate(StorageKeys.COVER_THEME_SECONDARY_COLOR, theme.secondaryColor)
+  }
+
+  private getFallbackCoverPageTheme(): CoverPageTheme {
+    if (this.isDarkMode) {
+      return {
+        baseColor: '#080A0F',
+        topColor: 'rgba(123, 127, 255, 0.32)',
+        middleColor: 'rgba(58, 68, 110, 0.28)',
+        bottomColor: 'rgba(0, 0, 0, 0.22)',
+        primaryColor: '#FFFFFF',
+        secondaryColor: 'rgba(255, 255, 255, 0.74)',
+        tertiaryColor: 'rgba(255, 255, 255, 0.52)',
+        progressTrackColor: 'rgba(255, 255, 255, 0.24)',
+        shadowColor: 'rgba(0, 0, 0, 0.34)'
+      }
+    }
+
+    return {
+      baseColor: '#F8FAFB',
+      topColor: 'rgba(123, 127, 255, 0.18)',
+      middleColor: 'rgba(123, 127, 255, 0.12)',
+      bottomColor: 'rgba(255, 255, 255, 0.20)',
+      primaryColor: '#202020',
+      secondaryColor: 'rgba(32, 32, 32, 0.68)',
+      tertiaryColor: 'rgba(32, 32, 32, 0.46)',
+      progressTrackColor: 'rgba(32, 32, 32, 0.18)',
+      shadowColor: 'rgba(0, 0, 0, 0.16)'
+    }
+  }
+
+  private buildCoverPageTheme(mainColor: CoverThemeRgb, averageColor: CoverThemeRgb,
+    saturationColor: CoverThemeRgb): CoverPageTheme {
+    const luminance: number = this.getLuminance(mainColor)
+    const isLightBackground: boolean = luminance > 160
+    const baseColor: string = isLightBackground ? '#F8FAFB' : '#080A0F'
+
+    return {
+      baseColor,
+      topColor: this.toRgba(mainColor, isLightBackground ? 0.30 : 0.56),
+      middleColor: this.toRgba(averageColor, isLightBackground ? 0.42 : 0.46),
+      bottomColor: this.toRgba(saturationColor, isLightBackground ? 0.24 : 0.38),
+      primaryColor: isLightBackground ? '#202020' : '#FFFFFF',
+      secondaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.68)' : 'rgba(255, 255, 255, 0.74)',
+      tertiaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.46)' : 'rgba(255, 255, 255, 0.52)',
+      progressTrackColor: isLightBackground ? 'rgba(32, 32, 32, 0.18)' : 'rgba(255, 255, 255, 0.24)',
+      shadowColor: isLightBackground
+        ? this.toRgba(mainColor, 0.18)
+        : 'rgba(0, 0, 0, 0.34)'
+    }
+  }
+
+  private isUsableThemeColor(color: CoverThemeRgb | null | undefined): boolean {
+    return !!color &&
+      Number.isFinite(color.red) &&
+      Number.isFinite(color.green) &&
+      Number.isFinite(color.blue)
+  }
+
+  private getLuminance(color: CoverThemeRgb): number {
+    return 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
+  }
+
+  private toRgba(color: CoverThemeRgb, alpha: number): string {
+    const normalizedAlpha: number = Math.max(0, Math.min(1, alpha))
+    return `rgba(${this.clampColor(color.red)}, ${this.clampColor(color.green)}, ${this.clampColor(color.blue)}, ${normalizedAlpha})`
+  }
+
+  private hexToRgb(color: string): CoverThemeRgb {
+    let hex: string = color.replace('#', '').trim()
+    if (hex.length === 3) {
+      hex = hex.split('').map((item: string) => `${item}${item}`).join('')
+    }
+    if (hex.length !== 6) {
+      return { red: 123, green: 127, blue: 255 }
+    }
+
+    return {
+      red: Number.parseInt(hex.substring(0, 2), 16),
+      green: Number.parseInt(hex.substring(2, 4), 16),
+      blue: Number.parseInt(hex.substring(4, 6), 16)
+    }
+  }
+
+  private clampColor(value: number): number {
+    return Math.max(0, Math.min(255, Math.round(value)))
   }
 
   private onPositionChange(): void {
@@ -825,9 +1008,7 @@ export struct NowPlayingView {
   }
 
   private getCoverShadowColor(): string {
-    return this.isDarkMode
-      ? this.withAlpha('#000000', 0.32)
-      : this.withAlpha(this.dominantColor, 0.22)
+    return this.coverPageShadowColor
   }
 
   private getMenuScrimColor(): string {
@@ -839,45 +1020,7 @@ export struct NowPlayingView {
   }
 
   private getBackdropBaseColor(): string {
-    return this.isDarkMode ? '#080A0F' : '#F8FAFB'
-  }
-
-  private getBackdropVeilColor(): string {
-    return this.isDarkMode ? this.withAlpha('#05070B', 0.46) : this.withAlpha('#F8FAFB', 0.38)
-  }
-
-  private getBackdropTopMistColor(): string {
-    return this.isDarkMode
-      ? this.withAlpha(this.dominantColor, 0.18)
-      : this.withAlpha(this.dominantColor, 0.14)
-  }
-
-  private getBackdropBottomMistColor(): string {
-    return this.isDarkMode ? this.withAlpha('#000000', 0.22) : this.withAlpha('#FFFFFF', 0.18)
-  }
-
-  private getBackdropBlurOpacity(): number {
-    return (this.isDarkMode ? 0.48 : 0.58) * this.getBgOpacity()
-  }
-
-  private getBackdropAuraOpacity(): number {
-    return (this.isDarkMode ? 0.34 : 0.46) * this.getBgOpacity()
-  }
-
-  private getBackdropAuraWidth(): number {
-    return this.getOverlayScreenWidth() * 1.36
-  }
-
-  private getBackdropAuraHeight(): number {
-    return this.getOverlayScreenHeight() * 1.18
-  }
-
-  private getBackdropAuraLeft(): number {
-    return (this.getOverlayScreenWidth() - this.getBackdropAuraWidth()) / 2
-  }
-
-  private getBackdropAuraTop(): number {
-    return -this.getOverlayScreenHeight() * 0.08
+    return this.coverBackdropBaseColor
   }
 
   private getSheetTranslateY(): number {
@@ -1915,7 +2058,7 @@ export struct NowPlayingView {
         Text(item)
           .fontSize(12)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.now_playing_secondary_icon'))
+          .fontColor(this.coverPageTertiaryColor)
       }, (item: string) => item)
     }
     .width('100%')
@@ -1970,7 +2113,7 @@ export struct NowPlayingView {
         .fontSize(this.overlayTitleFont)
         .lineHeight(this.overlayTitleLineHeight)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
+        .fontColor(this.coverPagePrimaryColor)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
@@ -1983,7 +2126,7 @@ export struct NowPlayingView {
         .fontSize(this.overlayArtistFont)
         .lineHeight(this.overlayArtistLineHeight)
         .fontWeight(FontWeight.Medium)
-        .fontColor('#111111')
+        .fontColor(this.coverPageSecondaryColor)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .textAlign(TextAlign.Center)
@@ -2003,7 +2146,7 @@ export struct NowPlayingView {
         .width(this.progressTimeLabelWidth)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.now_playing_primary_icon'))
+        .fontColor(this.coverPageSecondaryColor)
         .textAlign(TextAlign.Start)
 
       Stack({ alignContent: Alignment.Center }) {
@@ -2015,9 +2158,9 @@ export struct NowPlayingView {
           style: SliderStyle.OutSet
         })
           .width('100%')
-          .trackColor($r('app.color.progress_track'))
+          .trackColor(this.coverPageProgressTrackColor)
           .selectedColor(this.dominantColor)
-          .blockColor($r('app.color.now_playing_primary_icon'))
+          .blockColor(this.coverPagePrimaryColor)
           .blockSize({ width: 12, height: 12 })
           .trackThickness(6)
           .onChange((value: number, mode: SliderChangeMode) => {
@@ -2051,7 +2194,7 @@ export struct NowPlayingView {
         .width(this.progressTimeLabelWidth)
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.now_playing_primary_icon'))
+        .fontColor(this.coverPageSecondaryColor)
         .textAlign(TextAlign.End)
     }
     .width('100%')
@@ -2095,7 +2238,7 @@ export struct NowPlayingView {
         Text(this.currentTitle)
           .fontSize(32)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.ohos_id_color_text_primary'))
+          .fontColor(this.coverPagePrimaryColor)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -2103,7 +2246,7 @@ export struct NowPlayingView {
         SymbolGlyph(this.isCurrentSongFavorite() ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
           .fontSize(22)
           .fontColor([this.isCurrentSongFavorite() ? '#FF3B30' :
-            $r('app.color.now_playing_secondary_icon')])
+            this.coverPageSecondaryColor])
           .margin({ left: 12 })
           .onClick(() => {
             const song = this.getCurrentSong()
@@ -2118,7 +2261,7 @@ export struct NowPlayingView {
       Text(this.currentArtist)
         .fontSize(18)
         .fontWeight(FontWeight.Regular)
-        .fontColor($r('app.color.now_playing_secondary_icon'))
+        .fontColor(this.coverPageSecondaryColor)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -2213,6 +2356,9 @@ export struct NowPlayingView {
           PlayControls({
             bottomSafe: this.bottomSafeHeight + this.controlsFloatingOffset,
             immersiveProgress: this.getImmersiveProgress(),
+            primaryColor: this.coverPagePrimaryColor,
+            secondaryColor: this.coverPageSecondaryColor,
+            accentColor: this.dominantColor,
             onMoreClick: () => {
               this.toggleMoreSheet()
             }
@@ -2255,28 +2401,19 @@ export struct NowPlayingView {
           .backgroundColor(this.getBackdropBaseColor())
           .opacity(this.getBgOpacity())
 
-        if (this.coverPixelMap) {
-          Image(this.coverPixelMap)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-            .blur(92)
-            .opacity(this.getBackdropBlurOpacity())
-
-          Image(this.coverPixelMap)
-            .width(this.getBackdropAuraWidth())
-            .height(this.getBackdropAuraHeight())
-            .objectFit(ImageFit.Cover)
-            .blur(72)
-            .opacity(this.getBackdropAuraOpacity())
-            .position({ x: this.getBackdropAuraLeft(), y: this.getBackdropAuraTop() })
-        }
-
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor(this.getBackdropVeilColor())
+          .linearGradient({
+            angle: 160,
+            colors: [
+              [this.coverBackdropTopColor, 0.0],
+              [this.coverBackdropMiddleColor, 0.48],
+              [this.coverBackdropBottomColor, 1.0]
+            ]
+          })
           .opacity(this.getBgOpacity())
+          .animation({ duration: 800, curve: Curve.EaseInOut })
 
         Column()
           .width('100%')
@@ -2284,11 +2421,10 @@ export struct NowPlayingView {
           .linearGradient({
             angle: 180,
             colors: [
-              [this.getBackdropTopMistColor(), 0.0],
-              [this.withAlpha(this.dominantColor, this.isDarkMode ? 0.20 : 0.16), 0.22],
-              [this.withAlpha(this.dominantColor, this.isDarkMode ? 0.14 : 0.10), 0.48],
-              [this.withAlpha(this.dominantColor, this.isDarkMode ? 0.18 : 0.14), 0.74],
-              [this.getBackdropBottomMistColor(), 1.0]
+              [this.withAlpha(this.coverPagePrimaryColor, 0.05), 0.0],
+              [this.withAlpha(this.coverPagePrimaryColor, 0.00), 0.34],
+              [this.withAlpha(this.coverPagePrimaryColor, 0.00), 0.70],
+              [this.withAlpha(this.coverPagePrimaryColor, 0.08), 1.0]
             ]
           })
           .opacity(this.getBgOpacity())
@@ -2301,11 +2437,11 @@ export struct NowPlayingView {
         Column({ space: 16 }) {
           SymbolGlyph($r('sys.symbol.music'))
             .fontSize(72)
-            .fontColor([$r('app.color.now_playing_secondary_icon')])
+            .fontColor([this.coverPageSecondaryColor])
 
           Text('Select a song to start playback')
             .fontSize(16)
-            .fontColor($r('app.color.now_playing_secondary_icon'))
+            .fontColor(this.coverPageSecondaryColor)
         }
         .width('100%')
         .height('100%')

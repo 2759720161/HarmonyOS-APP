@@ -28,6 +28,8 @@ export class StorageKeys {
   static readonly IS_DARK_MODE: string = 'isDarkMode'
   static readonly SCAN_STATUS: string = 'scanStatus'  // 'idle'|'scanning'|'done'|'empty'
   static readonly DOMINANT_COLOR: string = 'dominantColor'
+  static readonly COVER_THEME_PRIMARY_COLOR: string = 'coverThemePrimaryColor'
+  static readonly COVER_THEME_SECONDARY_COLOR: string = 'coverThemeSecondaryColor'
   static readonly MINI_PLAYER_SCROLL_OFFSET: string = 'miniPlayerScrollOffset'
   static readonly CURRENT_LYRIC: string = 'currentLyric'
   static readonly LYRIC_LINES: string = 'lyricLines'
