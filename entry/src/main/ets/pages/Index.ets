@@ -2,14 +2,15 @@ import { Colors, StorageKeys } from '../common/Constants'
 import { SongListView } from '../components/SongListView'
 import { FavoriteView } from '../components/FavoriteView'
 import { FloatingTab } from '../components/FloatingTab'
-import { NowPlayingView } from '../components/NowPlayingView'
-import { MiniPlayer } from '../components/MiniPlayer'
+import { PlayerSurface } from '../components/PlayerSurface'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 import { image } from '@kit.ImageKit'
 import { PlayerService } from '../service/PlayerService'
 import { AudioPicker } from '../service/AudioPicker'
 import { PlaylistManager } from '../service/PlaylistManager'
 import { common } from '@kit.AbilityKit'
+import { CoverThemeService, CoverPageTheme } from '../service/CoverThemeService'
+
 
 @Entry
 @Component
@@ -28,23 +29,23 @@ struct Index {
   @StorageLink('songCount') songCount: number = 0
   @StorageLink('currentTab') currentTab: number = 0
 
-  @State private showNowPlaying: boolean = false
-  @State private nowPlayingProgress: number = 0
+  @State private playerMounted: boolean = false
+  @State private playerProgress: number = 0
+  @State private playerDockBottomOffset: number = 0
   @State private coverPixelMap: image.PixelMap | null = null
   @State private isLoading: boolean = false
   @State private loadingStatus: string = ''
   @State private loadingProgress: string = ''
   @State private lyricsProgress: number = 0
 
-  private readonly openDuration: number = 560
-  private readonly openMorphDuration: number = 300
-  private readonly openContentDuration: number = 360
-  private readonly openSettleProgress: number = 0.60
-  private readonly closeDuration: number = 340
+  private readonly playerOpenDuration: number = 520
+  private readonly playerCloseDuration: number = 430
   private readonly tabSwitchDuration: number = 250
-  private nowPlayingHideTask: number = -1
-  private nowPlayingOpenTask: number = -1
   private readonly dragThreshold: number = 300
+  private playerHideTask: number = -1
+  private playerOpenTask: number = -1
+  private coverThemeTaskToken: number = 0
+  private readonly coverThemeService: CoverThemeService = CoverThemeService.getInstance()
 
   aboutToAppear(): void {
     AppStorage.setOrCreate(StorageKeys.MODAL_OVERLAY_ACTIVE, false)
@@ -54,21 +55,75 @@ struct Index {
     if (count === 0) {
       AppStorage.setOrCreate(StorageKeys.SCAN_STATUS, 'idle')
     }
+    void this.initCoverThemeService()
     this.syncCover()
   }
 
   aboutToDisappear(): void {
-    this.clearNowPlayingHideTask()
-    this.clearNowPlayingOpenTask()
+    this.clearPlayerHideTask()
+    this.clearPlayerOpenTask()
+  }
+
+  private async initCoverThemeService(): Promise<void> {
+    try {
+      const context = getContext(this) as common.UIAbilityContext
+      await this.coverThemeService.init(context)
+      this.syncCover()
+    } catch (error) {
+      console.error('Index', `Init cover theme service failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private syncCover(): void {
     const pm = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
     this.coverPixelMap = pm ? pm as image.PixelMap : null
+    this.coverThemeTaskToken += 1
+    const taskToken: number = this.coverThemeTaskToken
+    const cacheKey: string = this.getCoverThemeCacheKey()
+    void this.applyCoverTheme(cacheKey, this.coverPixelMap, taskToken)
+  }
 
-    if (!this.coverPixelMap) {
-      AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, Colors.DEFAULT_DOMINANT_COLOR)
+  private getCoverThemeCacheKey(): string {
+    const song = PlayerService.getInstance().getCurrentSong()
+    if (song) {
+      if (song.coverUri.length > 0) {
+        return `cover:${song.coverUri}`
+      }
+      if (song.id.length > 0) {
+        return `song:${song.id}`
+      }
+      if (song.uri.length > 0) {
+        return `uri:${song.uri}`
+      }
     }
+    return `version:${this.coverVersion}`
+  }
+
+  private async applyCoverTheme(cacheKey: string, pixelMap: image.PixelMap | null, taskToken: number): Promise<void> {
+    const cachedTheme: CoverPageTheme | null = await this.coverThemeService.loadCachedTheme(cacheKey)
+    if (taskToken !== this.coverThemeTaskToken) {
+      return
+    }
+
+    if (cachedTheme) {
+      this.coverThemeService.applyTheme(cachedTheme)
+    }
+
+    if (!pixelMap) {
+      if (!cachedTheme && this.coverThemeService.isInitialized()) {
+        this.coverThemeService.applyTheme(this.coverThemeService.getFallbackTheme(this.isDarkMode))
+        AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, Colors.DEFAULT_DOMINANT_COLOR)
+      }
+      return
+    }
+
+    const theme: CoverPageTheme = await this.coverThemeService.computeAndCacheTheme(cacheKey, pixelMap, this.isDarkMode)
+    if (taskToken !== this.coverThemeTaskToken) {
+      return
+    }
+
+    this.coverThemeService.applyTheme(theme)
+    AppStorage.setOrCreate(StorageKeys.DOMINANT_COLOR, theme.glowColor)
   }
 
   private async pickAudioFiles(): Promise<void> {
@@ -90,7 +145,7 @@ struct Index {
         playerService.setSongList(PlaylistManager.getInstance().getPlaylist())
       }
     } catch (error) {
-      console.error('Index', `选择文件失败: ${JSON.stringify(error)}`)
+      console.error('Index', `Choose audio files failed: ${JSON.stringify(error)}`)
     } finally {
       this.isLoading = false
       this.loadingStatus = ''
@@ -98,32 +153,208 @@ struct Index {
     }
   }
 
-  @Builder
-  NowPlayingBuilder() {
-    NowPlayingView({
-      expandProgress: this.nowPlayingProgress,
-      onClose: () => {
-        this.closeNowPlaying()
-      },
-      onSwipeUpdate: (offsetY: number) => {
-        if (offsetY > 0) {
-          this.nowPlayingProgress = Math.max(0, 1 - offsetY / this.dragThreshold)
-        } else {
-          const boost: number = Math.min(1, this.nowPlayingProgress + Math.abs(offsetY) / (this.dragThreshold * 2))
-          this.nowPlayingProgress = Math.min(1, boost)
-        }
-      },
-      onSwipeEnd: (velocityY: number) => {
-        this.snapNowPlaying(velocityY)
-      },
-      onLyricsProgress: (progress: number) => {
-        this.lyricsProgress = progress
-      }
+  private clearPlayerHideTask(): void {
+    if (this.playerHideTask >= 0) {
+      clearTimeout(this.playerHideTask)
+      this.playerHideTask = -1
+    }
+  }
+
+  private clearPlayerOpenTask(): void {
+    if (this.playerOpenTask >= 0) {
+      clearTimeout(this.playerOpenTask)
+      this.playerOpenTask = -1
+    }
+  }
+
+  private canOpenNowPlaying(): boolean {
+    return this.currentIndex >= 0 && this.currentTitle.length > 0
+  }
+
+  private clampProgress(value: number): number {
+    return Math.max(0, Math.min(1, value))
+  }
+
+  private getNowPlayingContentOpacity(): number {
+    // 全屏内容层延后到 morph 空间动画基本落位后再显现。
+    // 避免封面页已经出现时，morph 层里的封面/歌名/歌手仍继续向上飞。
+    const t = this.clampProgress((this.playerProgress - 0.90) / 0.08)
+    return t * t * (3 - 2 * t)
+  }
+
+  private getMiniLayerOpacity(): number {
+    if (!this.canOpenNowPlaying()) {
+      return 0
+    }
+    if (!this.playerMounted) {
+      return 1
+    }
+    return 1 - this.transitionT(0.00, 0.10)
+  }
+
+  private getMorphLayerOpacity(): number {
+    if (!this.playerMounted) {
+      return 0
+    }
+
+    // morph 层在展开初段淡入，在 full 内容接管前淡出。
+    // 这样 full 封面页和 morph 封面不会重叠造成“往上飞”的残影。
+    const fadeIn = this.transitionT(0.00, 0.10)
+    const fadeOut = 1 - this.transitionT(0.94, 0.995)
+    return fadeIn * fadeOut
+  }
+
+  private isMiniInteractive(): boolean {
+    return !this.playerMounted && this.playerProgress <= 0.001
+  }
+
+  private getMiniDockBottomOffset(): number {
+    // 播放器展开/收回期间，mini 的最终 dock 位置必须保持和打开前一致。
+    // 否则关闭尾帧会先出现在底部 tab 区域，再跳/飞回原位置。
+    if (this.playerMounted) {
+      return this.playerDockBottomOffset
+    }
+    return this.shouldReserveFloatingTabSpace() ? 78 : 0
+  }
+
+  private getPageContentScale(): number {
+    return 1 - 0.025 * this.playerProgress
+  }
+
+  private getPageContentOpacity(): number {
+    return 1 - 0.42 * this.playerProgress
+  }
+
+  private transitionT(start: number, end: number): number {
+    const t = this.clampProgress((this.playerProgress - start) / (end - start))
+    return t * t * (3 - 2 * t)
+  }
+
+  private getFloatingTabOpacity(): number {
+    if (this.songCount <= 0) {
+      return 0
+    }
+    return 1 - this.transitionT(0.02, 0.16)
+  }
+
+  private isFloatingTabInteractive(): boolean {
+    return this.songCount > 0 && !this.playerMounted && this.playerProgress < 0.05
+  }
+
+  private switchTab(tabIndex: number): void {
+    if (this.currentTab === tabIndex) {
+      return
+    }
+
+    animateTo({
+      duration: this.tabSwitchDuration,
+      curve: Curve.EaseInOut
+    }, () => {
+      this.currentTab = tabIndex
     })
   }
 
+  private openNowPlaying(): void {
+    if (!this.canOpenNowPlaying()) {
+      return
+    }
+
+    this.clearPlayerOpenTask()
+    this.clearPlayerHideTask()
+
+    this.playerDockBottomOffset = this.getMiniDockBottomOffset()
+    this.playerMounted = true
+    this.playerProgress = 0
+
+    this.playerOpenTask = setTimeout(() => {
+      this.playerOpenTask = -1
+      animateTo({
+        duration: this.playerOpenDuration,
+        curve: Curve.Friction
+      }, () => {
+        this.playerProgress = 1
+      })
+    }, 16) as number
+  }
+
+  private closeNowPlaying(): void {
+    if (!this.playerMounted) {
+      return
+    }
+
+    this.clearPlayerOpenTask()
+    this.clearPlayerHideTask()
+    this.lyricsProgress = 0
+
+    animateTo({
+      duration: this.playerCloseDuration,
+      curve: Curve.Friction
+    }, () => {
+      this.playerProgress = 0
+    })
+
+    this.playerHideTask = setTimeout(() => {
+      this.lyricsProgress = 0
+      this.playerMounted = false
+      this.playerHideTask = -1
+    }, this.playerCloseDuration + 80) as number
+  }
+
+  private updateNowPlayingSwipe(offsetY: number): void {
+    if (offsetY > 0) {
+      this.playerProgress = this.clampProgress(1 - offsetY / this.dragThreshold)
+      return
+    }
+
+    const boost: number = Math.min(1, this.playerProgress + Math.abs(offsetY) / (this.dragThreshold * 2))
+    this.playerProgress = this.clampProgress(boost)
+  }
+
+  private snapNowPlaying(velocityY: number): void {
+    this.clearPlayerOpenTask()
+    const p = this.playerProgress
+    const shouldOpen: boolean = p > 0.45 || velocityY < -400
+    const shouldClose: boolean = p < 0.40 || velocityY > 400
+
+    if (shouldOpen && !shouldClose) {
+      this.clearPlayerHideTask()
+      animateTo({ duration: this.playerOpenDuration, curve: Curve.Friction }, () => {
+        this.playerProgress = 1
+      })
+      return
+    }
+
+    if (shouldClose && !shouldOpen) {
+      this.closeNowPlaying()
+      return
+    }
+
+    if (p >= 0.5) {
+      this.clearPlayerHideTask()
+      animateTo({ duration: this.playerOpenDuration, curve: Curve.Friction }, () => {
+        this.playerProgress = 1
+      })
+    } else {
+      this.closeNowPlaying()
+    }
+  }
+
+  onBackPress(): boolean | void {
+    if (this.playerMounted || this.playerProgress > 0.01) {
+      this.closeNowPlaying()
+      return true
+    }
+
+    if (this.currentTab !== 0) {
+      this.switchTab(0)
+      return true
+    }
+
+    return false
+  }
+
   @Builder
-  PageContentBuilder() {
+  private PageContentBuilder() {
     Column() {
       if (this.isLoading) {
         Column() {
@@ -177,250 +408,92 @@ struct Index {
     .height('100%')
   }
 
-  private clearNowPlayingHideTask(): void {
-    if (this.nowPlayingHideTask >= 0) {
-      clearTimeout(this.nowPlayingHideTask)
-      this.nowPlayingHideTask = -1
-    }
-  }
-
-  private clearNowPlayingOpenTask(): void {
-    if (this.nowPlayingOpenTask >= 0) {
-      clearTimeout(this.nowPlayingOpenTask)
-      this.nowPlayingOpenTask = -1
-    }
-  }
-
-  private scheduleNowPlayingUnmount(): void {
-    this.clearNowPlayingHideTask()
-    this.nowPlayingHideTask = setTimeout(() => {
-      this.lyricsProgress = 0
-      this.showNowPlaying = false
-      this.nowPlayingHideTask = -1
-    }, this.closeDuration) as number
-  }
-
-  private canOpenNowPlaying(): boolean {
-    return this.currentIndex >= 0 && this.currentTitle.length > 0
-  }
-
-  private clampProgress(value: number): number {
-    return Math.max(0, Math.min(1, value))
-  }
-
-  private switchTab(tabIndex: number): void {
-    if (this.currentTab === tabIndex) {
-      return
-    }
-
-    animateTo({
-      duration: this.tabSwitchDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.currentTab = tabIndex
-    })
-  }
-
-  private updateMiniSwipe(offsetY: number): void {
-    if (!this.canOpenNowPlaying()) {
-      return
-    }
-
-    this.clearNowPlayingOpenTask()
-    this.clearNowPlayingHideTask()
-
-    if (!this.showNowPlaying && offsetY >= 0) {
-      this.nowPlayingProgress = 0
-      return
-    }
-
-    if (!this.showNowPlaying) {
-      this.showNowPlaying = true
-    }
-
-    if (offsetY < 0) {
-      this.nowPlayingProgress = this.clampProgress(Math.abs(offsetY) / this.dragThreshold)
-    } else {
-      this.nowPlayingProgress = this.clampProgress(1 - offsetY / this.dragThreshold)
-    }
-  }
-
-  private animateOpenNowPlaying(): void {
-    // 第一阶段：封面与歌名形变上移（progress 0 → morphEnd），此时其它按钮/信息仍为 0 透明度
-    animateTo({
-      duration: this.openMorphDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.nowPlayingProgress = this.openSettleProgress
-    })
-    // 第二阶段：进度推到 1，驱动 TopBar / SongHeader / ProgressSection / PlayControls 依阈值从底部淡入
-    this.clearNowPlayingOpenTask()
-    this.nowPlayingOpenTask = setTimeout(() => {
-      this.nowPlayingOpenTask = -1
-      animateTo({
-        duration: this.openContentDuration,
-        curve: Curve.EaseOut
-      }, () => {
-        this.nowPlayingProgress = 1
-      })
-    }, this.openMorphDuration) as number
-  }
-
-  private openNowPlaying(): void {
-    if (!this.canOpenNowPlaying()) {
-      return
-    }
-    this.clearNowPlayingOpenTask()
-    this.clearNowPlayingHideTask()
-
-    if (this.nowPlayingProgress <= 0.001) {
-      this.showNowPlaying = true
-      this.nowPlayingProgress = 0
-      this.nowPlayingOpenTask = setTimeout(() => {
-        this.nowPlayingOpenTask = -1
-        this.animateOpenNowPlaying()
-      }, 16) as number
-      return
-    }
-
-    this.showNowPlaying = true
-    this.animateOpenNowPlaying()
-  }
-
-  private closeNowPlaying(): void {
-    if (!this.showNowPlaying && this.nowPlayingProgress <= 0) {
-      return
-    }
-    this.clearNowPlayingOpenTask()
-    this.clearNowPlayingHideTask()
-    this.showNowPlaying = true
-    animateTo({
-      duration: this.closeDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.nowPlayingProgress = 0
-    })
-    this.scheduleNowPlayingUnmount()
-  }
-
-  private snapNowPlaying(velocityY: number): void {
-    this.clearNowPlayingOpenTask()
-    const p = this.nowPlayingProgress
-    const shouldOpen: boolean = p > 0.4 || velocityY < -400
-    const shouldClose: boolean = p < 0.35 || velocityY > 400
-
-    if (shouldOpen && !shouldClose) {
-      this.clearNowPlayingHideTask()
-      this.showNowPlaying = true
-      animateTo({ duration: this.openDuration, curve: Curve.EaseOut }, () => {
-        this.nowPlayingProgress = 1
-      })
-    } else if (shouldClose && !shouldOpen) {
-      this.clearNowPlayingHideTask()
-      this.showNowPlaying = true
-      animateTo({ duration: this.closeDuration, curve: Curve.EaseInOut }, () => {
-        this.nowPlayingProgress = 0
-      })
-      this.scheduleNowPlayingUnmount()
-    } else if (p >= 0.5) {
-      this.clearNowPlayingHideTask()
-      this.showNowPlaying = true
-      animateTo({ duration: this.openDuration, curve: Curve.EaseOut }, () => {
-        this.nowPlayingProgress = 1
-      })
-    } else {
-      this.clearNowPlayingHideTask()
-      this.showNowPlaying = true
-      animateTo({ duration: this.closeDuration, curve: Curve.EaseInOut }, () => {
-        this.nowPlayingProgress = 0
-      })
-      this.scheduleNowPlayingUnmount()
-    }
-  }
-
-  onBackPress(): boolean | void {
-    if (this.showNowPlaying || this.nowPlayingProgress > 0.01) {
-      this.closeNowPlaying()
-      return true
-    }
-    if (this.currentTab !== 0) {
-      this.switchTab(0)
-      return true
-    }
-    return false
-  }
-
-  private getMiniPlayerTitle(): string {
-    if (this.currentTitle.length > 0) {
-      return this.currentTitle
-    }
-    return '未在播放'
+  private shouldReserveFloatingTabSpace(): boolean {
+    return this.songCount > 0 && !this.playerMounted && this.playerProgress <= 0.001
   }
 
   @Builder
-  MiniPlayerFloatingNav() {
-    MiniPlayer({
-      expandProgress: this.nowPlayingProgress,
+  private PlayerContainer() {
+    PlayerSurface({
+      progress: this.playerProgress,
+      mounted: this.playerMounted,
+      canOpen: this.canOpenNowPlaying(),
+      dockBottomOffset: this.playerDockBottomOffset,
+      miniDockBottomOffset: this.getMiniDockBottomOffset(),
       lyricsProgress: this.lyricsProgress,
-      dockBottomOffset: this.shouldShowFloatingTab() ? 78 : 0,
+      contentLayerProgress: this.getNowPlayingContentOpacity(),
+      miniLayerOpacity: this.getMiniLayerOpacity(),
+      morphLayerOpacity: this.getMorphLayerOpacity(),
+      miniInteractive: this.isMiniInteractive(),
       onOpen: () => {
         this.openNowPlaying()
       },
+      onClose: () => {
+        this.closeNowPlaying()
+      },
       onSwipeUpdate: (offsetY: number) => {
-        this.updateMiniSwipe(offsetY)
+        this.updateNowPlayingSwipe(offsetY)
       },
       onSwipeEnd: (velocityY: number) => {
         this.snapNowPlaying(velocityY)
+      },
+      onLyricsProgress: (progress: number) => {
+        this.lyricsProgress = progress
       }
     })
-  }
-
-  private shouldShowFloatingTab(): boolean {
-    return this.songCount > 0 && !this.showNowPlaying && this.nowPlayingProgress <= 0.001
+      .width('100%')
+      .height('100%')
   }
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      this.PageContentBuilder()
-
-      if (this.showNowPlaying) {
-        Stack({ alignContent: Alignment.Bottom }) {
-          this.NowPlayingBuilder()
-        }
-        .width('100%')
-        .height('100%')
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .clip(true)
-        .hitTestBehavior(HitTestMode.Default)
-        .zIndex(30)
-      }
-
       Column() {
-        this.MiniPlayerFloatingNav()
+        this.PageContentBuilder()
       }
       .width('100%')
-      .hitTestBehavior(this.showNowPlaying ? HitTestMode.Transparent : HitTestMode.Default)
-      .zIndex(this.showNowPlaying ? 20 : 30)
+      .height('100%')
+      .scale({
+        x: this.getPageContentScale(),
+        y: this.getPageContentScale(),
+        centerX: '50%',
+        centerY: '50%'
+      })
+      .opacity(this.getPageContentOpacity())
 
-      if (this.shouldShowFloatingTab()) {
-        Column() {
-          FloatingTab({
-            currentTab: this.currentTab,
-            dominantColor: this.dominantColor,
-            isDarkMode: this.isDarkMode,
-            onTabChange: (tabIndex: number) => {
-              this.switchTab(tabIndex)
-            }
-          })
-        }
+      Column()
         .width('100%')
-        .padding({
-          left: 18,
-          right: 18,
-          bottom: this.bottomSafeHeight + 24
-        })
-        .zIndex(40)
+        .height('100%')
+        .backgroundColor('rgba(0, 0, 0, 0.10)')
+        .opacity(this.playerMounted ? this.playerProgress : 0)
+        .hitTestBehavior(HitTestMode.Transparent)
+        .zIndex(10)
+
+      Stack() {
+        this.PlayerContainer()
       }
+      .width('100%')
+      .height('100%')
+      .zIndex(30)
+
+      Column() {
+        FloatingTab({
+          currentTab: this.currentTab,
+          dominantColor: this.dominantColor,
+          isDarkMode: this.isDarkMode,
+          onTabChange: (tabIndex: number) => {
+            this.switchTab(tabIndex)
+          }
+        })
+      }
+      .width('100%')
+      .padding({
+        left: 18,
+        right: 18,
+        bottom: this.bottomSafeHeight + 24
+      })
+      .opacity(this.getFloatingTabOpacity())
+      .hitTestBehavior(this.isFloatingTabInteractive() ? HitTestMode.Default : HitTestMode.None)
+      .zIndex(40)
     }
     .width('100%')
     .height('100%')

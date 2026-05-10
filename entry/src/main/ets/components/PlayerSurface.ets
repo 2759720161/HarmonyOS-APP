@@ -3497,7 +3497,9 @@ struct SurfaceNowPlayingView {
   }
 
   private isCoverControlsInteractive(): boolean {
-    if (this.expandProgress < 0.96) {
+    // 控件在 expandProgress > 0.85 时已经可见，不能等到 0.96 才开启命中。
+    // 否则会出现“图标已显示，但点击穿透到底层 Column”的问题。
+    if (!this.shouldShowCoverControlsOverlay()) {
       return false
     }
     if (this.isLyricsPageVisible()) {
@@ -3583,6 +3585,40 @@ struct SurfaceNowPlayingView {
     this.openMoreSheet()
   }
 
+  private handleDockControlsTouch(event: TouchEvent): void {
+    if (!this.isCoverControlsInteractive() || this.getDockSecondaryOpacity() <= 0.05) {
+      return
+    }
+
+    const touch: TouchObject | null = this.getPrimaryTouch(event)
+    if (!touch) {
+      return
+    }
+
+    const secondaryTop: number = this.getDockPrimarySideSize() + 12
+    const secondaryBottom: number = secondaryTop + this.getDockSecondaryButtonHeight()
+    if (touch.y < secondaryTop || touch.y > secondaryBottom) {
+      return
+    }
+
+    event.stopPropagation()
+    if (event.type !== TouchType.Up) {
+      return
+    }
+
+    const width: number = Math.max(1, this.getOverlayScreenWidth() - 48)
+    const x: number = Math.max(0, Math.min(width, touch.x))
+    const segment: number = width / 3
+
+    if (x < segment) {
+      this.handleMoreButtonTap()
+    } else if (x < segment * 2) {
+      this.handleModeButtonTap()
+    } else {
+      this.handlePlaylistButtonTap()
+    }
+  }
+
   @Builder
   private DockPrevButton() {
     Stack({ alignContent: Alignment.Center }) {
@@ -3632,24 +3668,76 @@ struct SurfaceNowPlayingView {
   }
 
   @Builder
+  private DockMoreIcon() {
+    Column({ space: 5 }) {
+      Circle()
+        .width(4)
+        .height(4)
+        .fill(this.coverPageSecondaryColor)
+
+      Circle()
+        .width(4)
+        .height(4)
+        .fill(this.coverPageSecondaryColor)
+
+      Circle()
+        .width(4)
+        .height(4)
+        .fill(this.coverPageSecondaryColor)
+    }
+    .width(30)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      this.handleMoreButtonTap()
+    })
+  }
+
+  @Builder
+  private DockPlaylistIcon() {
+    Column({ space: 5 }) {
+      Row()
+        .width(24)
+        .height(2)
+        .backgroundColor(this.coverPageSecondaryColor)
+        .borderRadius(1)
+
+      Row()
+        .width(24)
+        .height(2)
+        .backgroundColor(this.coverPageSecondaryColor)
+        .borderRadius(1)
+
+      Row()
+        .width(16)
+        .height(2)
+        .backgroundColor(this.coverPageSecondaryColor)
+        .borderRadius(1)
+    }
+    .width(30)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      this.handlePlaylistButtonTap()
+    })
+  }
+
+  @Builder
   private DockMoreButton() {
     Stack({ alignContent: Alignment.Center }) {
-      Text('•••')
-        .fontSize(28)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.coverPageSecondaryColor)
-        .textAlign(TextAlign.Center)
+      this.DockMoreIcon()
     }
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
-    .backgroundColor(this.withAlpha('#000000', 0.001))
+    .backgroundColor(Color.Transparent)
     .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onTouch((event: TouchEvent) => {
-      event.stopPropagation()
-      if (event.type === TouchType.Up) {
-        this.handleMoreButtonTap()
-      }
+    .onClick(() => {
+      this.handleMoreButtonTap()
     })
   }
 
@@ -3663,35 +3751,25 @@ struct SurfaceNowPlayingView {
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
-    .backgroundColor(this.withAlpha('#000000', 0.001))
+    .backgroundColor(Color.Transparent)
     .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onTouch((event: TouchEvent) => {
-      event.stopPropagation()
-      if (event.type === TouchType.Up) {
-        this.handleModeButtonTap()
-      }
+    .onClick(() => {
+      this.handleModeButtonTap()
     })
   }
 
   @Builder
   private DockPlaylistButton() {
     Stack({ alignContent: Alignment.Center }) {
-      Text('☰')
-        .fontSize(30)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.coverPageSecondaryColor)
-        .textAlign(TextAlign.Center)
+      this.DockPlaylistIcon()
     }
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
-    .backgroundColor(this.withAlpha('#000000', 0.001))
+    .backgroundColor(Color.Transparent)
     .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onTouch((event: TouchEvent) => {
-      event.stopPropagation()
-      if (event.type === TouchType.Up) {
-        this.handlePlaylistButtonTap()
-      }
+    .onClick(() => {
+      this.handlePlaylistButtonTap()
     })
   }
 
