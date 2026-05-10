@@ -1469,6 +1469,9 @@ struct SurfaceNowPlayingView {
   }
 
   private openMoreSheet(): void {
+    console.info('PlayerSurfaceTrace',
+      `openMoreSheet ENTER progress=${this.expandProgress}, contentOnly=${this.contentOnly}, activeContent=${this.activeContent}, ` +
+        `beforeVisible=${this.isMoreSheetVisible}, block=${this.getCoverControlsBlockReason()}`)
     this.clearMoreSheetHideTask()
     this.clearOnlineSearchPopupHideTask()
     this.clearDetailDialogHideTask()
@@ -1479,12 +1482,14 @@ struct SurfaceNowPlayingView {
       void this.loadApiSettings()
     }
     this.isMoreSheetVisible = true
+    console.info('PlayerSurfaceTrace', `openMoreSheet SET_VISIBLE visible=${this.isMoreSheetVisible}`)
     this.moreSheetProgress = 0
     this.sheetDragOffsetY = 0
     animateTo({
       duration: this.moreSheetAnimationDuration,
       curve: Curve.EaseOut
     }, () => {
+      console.info('PlayerSurfaceTrace', 'openMoreSheet ANIMATE_TO_ONE')
       this.moreSheetProgress = 1
     })
   }
@@ -2174,7 +2179,7 @@ struct SurfaceNowPlayingView {
     return this.getOverlayProgressReserveHeight()
   }
 
-  private getCoverBottomDockHeight(): number {
+  private getCoverInlineBottomHeight(): number {
     return this.overlayProgressHeight + this.overlayProgressControlsGap + this.overlayControlsBaseHeight +
       this.bottomSafeHeight + 20
   }
@@ -3440,10 +3445,28 @@ struct SurfaceNowPlayingView {
         Blank()
           .layoutWeight(1)
 
-        // 底部进度条和控制按钮已经移到 Swiper 外层的 CoverBottomDock。
-        // 这里仅保留同等高度占位，避免封面/标题区域压到底部。
-        Blank()
-          .height(this.getCoverBottomDockHeight())
+        // 底部进度条和控制按钮直接作为封面页内容渲染。
+        // 这里不再通过 Swiper 外层 dock / overlay / hit layer 接管事件，
+        // 避免可见图标和真实点击层错位。
+        Column({ space: this.overlayProgressControlsGap }) {
+          Column() {
+            this.ProgressSection()
+          }
+          .width('100%')
+          .height(this.overlayProgressHeight)
+          .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
+
+          this.CoverInlineControls()
+        }
+        .width('100%')
+        .height(this.getCoverInlineBottomHeight())
+        .justifyContent(FlexAlign.End)
+        .alignItems(HorizontalAlign.Center)
+        .opacity(this.getContentOpacity(0.86) * this.getImmersiveHiddenOpacity())
+        .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
+        .onTouch((event: TouchEvent) => {
+          this.handleInlineControlsTouch(event)
+        })
       }
       .width('100%')
       .height('100%')
@@ -3473,20 +3496,7 @@ struct SurfaceNowPlayingView {
   }
 
 
-  private getSecondaryControlsWidth(): number {
-    return Math.min(this.getOverlayScreenWidth() - 56, 392)
-  }
-
-  private getMoreButtonHotspotLeft(): number {
-    return (this.getOverlayScreenWidth() - this.getSecondaryControlsWidth()) / 2 + 24
-  }
-
-  private getMoreButtonHotspotTop(): number {
-    return this.getOverlayScreenHeight() - this.bottomSafeHeight - this.controlsFloatingOffset - 56
-  }
-
-
-  private shouldShowCoverControlsOverlay(): boolean {
+  private shouldShowCoverControlsInline(): boolean {
     if (this.expandProgress <= 0.85) {
       return false
     }
@@ -3497,9 +3507,7 @@ struct SurfaceNowPlayingView {
   }
 
   private isCoverControlsInteractive(): boolean {
-    // 控件在 expandProgress > 0.85 时已经可见，不能等到 0.96 才开启命中。
-    // 否则会出现“图标已显示，但点击穿透到底层 Column”的问题。
-    if (!this.shouldShowCoverControlsOverlay()) {
+    if (!this.shouldShowCoverControlsInline()) {
       return false
     }
     if (this.isLyricsPageVisible()) {
@@ -3512,14 +3520,38 @@ struct SurfaceNowPlayingView {
     return true
   }
 
-  private shouldShowCoverBottomDock(): boolean {
-    if (!this.shouldShowCoverControlsOverlay()) {
-      return false
+  private getCoverControlsBlockReason(): string {
+    if (!this.shouldShowCoverControlsInline()) {
+      if (this.expandProgress <= 0.85) {
+        return `progress:${this.expandProgress}`
+      }
+      if (this.currentIndex < 0) {
+        return 'no-current-index'
+      }
+      if (this.currentTitle.length === 0) {
+        return 'empty-title'
+      }
+      return 'not-show-inline'
     }
     if (this.isLyricsPageVisible()) {
-      return false
+      return 'lyrics-page'
     }
-    return true
+    if (this.isMoreSheetVisible) {
+      return 'more-sheet-visible'
+    }
+    if (this.isOnlineSearchPopupVisible) {
+      return 'online-search-visible'
+    }
+    if (this.isDetailDialogVisible) {
+      return 'detail-dialog-visible'
+    }
+    if (this.isApiSettingsDialogVisible) {
+      return 'api-settings-visible'
+    }
+    if (this.isDeleteDialogVisible) {
+      return 'delete-dialog-visible'
+    }
+    return 'none'
   }
 
   private getDockPrimarySideSize(): number {
@@ -3550,6 +3582,10 @@ struct SurfaceNowPlayingView {
     return 58
   }
 
+  private getInlineControlsHeight(): number {
+    return this.getDockPrimarySideSize() + 12 + this.getDockSecondaryButtonHeight() + this.bottomSafeHeight + 20
+  }
+
   private getNextPlayMode(): PlayMode {
     if (this.playMode === PlayMode.SEQUENCE) {
       return PlayMode.SINGLE
@@ -3565,28 +3601,42 @@ struct SurfaceNowPlayingView {
   }
 
   private handleMoreButtonTap(): void {
-    if (!this.isCoverControlsInteractive()) {
-      return
-    }
+    console.info('PlayerSurfaceTrace', `InlineMoreAction click progress=${this.expandProgress}`)
     this.openMoreSheet()
   }
 
   private handleModeButtonTap(): void {
-    if (!this.isCoverControlsInteractive()) {
-      return
-    }
-    PlayerService.getInstance().setPlayMode(this.getNextPlayMode())
+    console.info('PlayerSurfaceTrace', `InlineModeAction click progress=${this.expandProgress}`)
+    const next: PlayMode = this.getNextPlayMode()
+    PlayerService.getInstance().setPlayMode(next)
   }
 
   private handlePlaylistButtonTap(): void {
-    if (!this.isCoverControlsInteractive()) {
-      return
-    }
+    console.info('PlayerSurfaceTrace', `InlinePlaylistAction click progress=${this.expandProgress}`)
     this.openMoreSheet()
   }
 
-  private handleDockControlsTouch(event: TouchEvent): void {
-    if (!this.isCoverControlsInteractive() || this.getDockSecondaryOpacity() <= 0.05) {
+  private canHandleInlineControlsTouch(): boolean {
+    if (!this.shouldShowCoverControlsInline()) {
+      return false
+    }
+    if (this.isLyricsPageVisible()) {
+      return false
+    }
+    if (this.isMoreSheetVisible || this.isOnlineSearchPopupVisible || this.isDetailDialogVisible ||
+      this.isApiSettingsDialogVisible || this.isDeleteDialogVisible) {
+      return false
+    }
+    return true
+  }
+
+  private handleInlineControlsTouch(event: TouchEvent): void {
+    if (event.type !== TouchType.Up) {
+      return
+    }
+
+    if (!this.canHandleInlineControlsTouch()) {
+      console.info('PlayerSurfaceTrace', `InlineControlsTouch blocked reason=${this.getCoverControlsBlockReason()}, progress=${this.expandProgress}`)
       return
     }
 
@@ -3595,80 +3645,48 @@ struct SurfaceNowPlayingView {
       return
     }
 
-    const secondaryTop: number = this.getDockPrimarySideSize() + 12
-    const secondaryBottom: number = secondaryTop + this.getDockSecondaryButtonHeight()
-    if (touch.y < secondaryTop || touch.y > secondaryBottom) {
+    const localX: number = touch.x
+    const localY: number = touch.y
+    const contentWidth: number = Math.max(1, this.getOverlayScreenWidth() - 48)
+    const progressEnd: number = this.overlayProgressHeight + this.overlayProgressControlsGap
+    const primaryStart: number = progressEnd
+    const primaryEnd: number = primaryStart + this.getDockPrimarySideSize()
+    const secondaryStart: number = primaryEnd + 12
+    const secondaryEnd: number = secondaryStart + this.getDockSecondaryButtonHeight()
+
+    if (localY >= primaryStart && localY <= primaryEnd) {
+      event.stopPropagation()
+      if (localX < contentWidth / 3) {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch prev x=${localX}, y=${localY}`)
+        PlayerService.getInstance().prev()
+      } else if (localX > contentWidth * 2 / 3) {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch next x=${localX}, y=${localY}`)
+        PlayerService.getInstance().next()
+      } else {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch play x=${localX}, y=${localY}`)
+        PlayerService.getInstance().togglePlayPause()
+      }
       return
     }
 
-    event.stopPropagation()
-    if (event.type !== TouchType.Up) {
-      return
-    }
-
-    const width: number = Math.max(1, this.getOverlayScreenWidth() - 48)
-    const x: number = Math.max(0, Math.min(width, touch.x))
-    const segment: number = width / 3
-
-    if (x < segment) {
-      this.handleMoreButtonTap()
-    } else if (x < segment * 2) {
-      this.handleModeButtonTap()
-    } else {
-      this.handlePlaylistButtonTap()
+    if (localY >= secondaryStart && localY <= secondaryEnd) {
+      event.stopPropagation()
+      if (localX < contentWidth / 3) {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch more x=${localX}, y=${localY}`)
+        this.openMoreSheet()
+      } else if (localX > contentWidth * 2 / 3) {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch playlist x=${localX}, y=${localY}`)
+        this.openMoreSheet()
+      } else {
+        console.info('PlayerSurfaceTrace', `InlineControlsTouch mode x=${localX}, y=${localY}`)
+        const next: PlayMode = this.getNextPlayMode()
+        PlayerService.getInstance().setPlayMode(next)
+      }
     }
   }
 
   @Builder
-  private DockPrevButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph($r('sys.symbol.backward_end_fill'))
-        .fontSize(this.getDockPrimarySideIconSize())
-        .fontColor([this.coverPagePrimaryColor])
-    }
-    .width(this.getDockPrimarySideSize())
-    .height(this.getDockPrimarySideSize())
-    .borderRadius(this.getDockPrimarySideSize() / 2)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      PlayerService.getInstance().prev()
-    })
-  }
-
-  @Builder
-  private DockPlayButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-        .fontSize(this.getDockPrimaryCenterIconSize())
-        .fontColor([this.coverPagePrimaryColor])
-    }
-    .width(this.getDockPrimaryCenterSize())
-    .height(this.getDockPrimaryCenterSize())
-    .borderRadius(this.getDockPrimaryCenterSize() / 2)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      PlayerService.getInstance().togglePlayPause()
-    })
-  }
-
-  @Builder
-  private DockNextButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      SymbolGlyph($r('sys.symbol.forward_end_fill'))
-        .fontSize(this.getDockPrimarySideIconSize())
-        .fontColor([this.coverPagePrimaryColor])
-    }
-    .width(this.getDockPrimarySideSize())
-    .height(this.getDockPrimarySideSize())
-    .borderRadius(this.getDockPrimarySideSize() / 2)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      PlayerService.getInstance().next()
-    })
-  }
-
-  @Builder
-  private DockMoreIcon() {
+  private InlineMoreGlyph() {
     Column({ space: 5 }) {
       Circle()
         .width(4)
@@ -3689,14 +3707,11 @@ struct SurfaceNowPlayingView {
     .height(30)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      this.handleMoreButtonTap()
-    })
+    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
-  private DockPlaylistIcon() {
+  private InlinePlaylistGlyph() {
     Column({ space: 5 }) {
       Row()
         .width(24)
@@ -3720,142 +3735,159 @@ struct SurfaceNowPlayingView {
     .height(30)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private InlinePrevButton() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.backward_end_fill'))
+        .fontSize(this.getDockPrimarySideIconSize())
+        .fontColor([this.coverPagePrimaryColor])
+    }
+    .width(this.getDockPrimarySideSize())
+    .height(this.getDockPrimarySideSize())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(this.getDockPrimarySideSize() / 2)
+    .backgroundColor(Color.Transparent)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
     .onClick(() => {
-      this.handlePlaylistButtonTap()
+      console.info('PlayerSurfaceTrace', 'InlinePrevButton click')
+      PlayerService.getInstance().prev()
     })
   }
 
   @Builder
-  private DockMoreButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      this.DockMoreIcon()
+  private InlinePlayButton() {
+    Row() {
+      SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+        .fontSize(this.getDockPrimaryCenterIconSize())
+        .fontColor([this.coverPagePrimaryColor])
+    }
+    .width(this.getDockPrimaryCenterSize())
+    .height(this.getDockPrimaryCenterSize())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(this.getDockPrimaryCenterSize() / 2)
+    .backgroundColor(Color.Transparent)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      console.info('PlayerSurfaceTrace', 'InlinePlayButton click')
+      PlayerService.getInstance().togglePlayPause()
+    })
+  }
+
+  @Builder
+  private InlineNextButton() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.forward_end_fill'))
+        .fontSize(this.getDockPrimarySideIconSize())
+        .fontColor([this.coverPagePrimaryColor])
+    }
+    .width(this.getDockPrimarySideSize())
+    .height(this.getDockPrimarySideSize())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(this.getDockPrimarySideSize() / 2)
+    .backgroundColor(Color.Transparent)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      console.info('PlayerSurfaceTrace', 'InlineNextButton click')
+      PlayerService.getInstance().next()
+    })
+  }
+
+  @Builder
+  private InlineMoreButton() {
+    Row() {
+      this.InlineMoreGlyph()
     }
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
     .backgroundColor(Color.Transparent)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
     .onClick(() => {
       this.handleMoreButtonTap()
     })
   }
 
   @Builder
-  private DockModeButton() {
-    Stack({ alignContent: Alignment.Center }) {
+  private InlineModeButton() {
+    Row() {
       SymbolGlyph(getPlayModeIcon(this.playMode as PlayMode))
         .fontSize(30)
         .fontColor([this.getModeColor()])
     }
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
     .backgroundColor(Color.Transparent)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
     .onClick(() => {
       this.handleModeButtonTap()
     })
   }
 
   @Builder
-  private DockPlaylistButton() {
-    Stack({ alignContent: Alignment.Center }) {
-      this.DockPlaylistIcon()
+  private InlinePlaylistButton() {
+    Row() {
+      this.InlinePlaylistGlyph()
     }
     .width(this.getDockSecondaryButtonWidth())
     .height(this.getDockSecondaryButtonHeight())
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
     .borderRadius(this.getDockSecondaryButtonHeight() / 2)
     .backgroundColor(Color.Transparent)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
     .onClick(() => {
       this.handlePlaylistButtonTap()
     })
   }
 
   @Builder
-  private CoverDockControls() {
+  private CoverInlineControls() {
     Column({ space: 12 }) {
       Row({ space: 26 }) {
-        this.DockPrevButton()
-        this.DockPlayButton()
-        this.DockNextButton()
+        this.InlinePrevButton()
+        this.InlinePlayButton()
+        this.InlineNextButton()
       }
       .width('100%')
       .height(this.getDockPrimarySideSize())
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
+      .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
 
       Row({ space: 22 }) {
-        this.DockMoreButton()
-        this.DockModeButton()
-        this.DockPlaylistButton()
+        this.InlineMoreButton()
+        this.InlineModeButton()
+        this.InlinePlaylistButton()
       }
       .width('100%')
       .height(this.getDockSecondaryButtonHeight())
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
       .opacity(this.getDockSecondaryOpacity())
-      .hitTestBehavior(this.isCoverControlsInteractive() && this.getDockSecondaryOpacity() > 0.05 ? HitTestMode.Default : HitTestMode.None)
+      .hitTestBehavior(this.shouldShowCoverControlsInline() && this.getDockSecondaryOpacity() > 0.05 ? HitTestMode.Default : HitTestMode.None)
 
       Blank()
         .height(this.bottomSafeHeight + 20)
     }
     .width('100%')
-    .height(this.getDockPrimarySideSize() + 12 + this.getDockSecondaryButtonHeight() + this.bottomSafeHeight + 20)
+    .height(this.getInlineControlsHeight())
     .alignItems(HorizontalAlign.Center)
     .justifyContent(FlexAlign.Start)
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-  }
-
-  @Builder
-  private CoverBottomDock() {
-    Column({ space: this.overlayProgressControlsGap }) {
-      Column() {
-        this.ProgressSection()
-      }
-      .width('100%')
-      .height(this.overlayProgressHeight)
-      .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-
-      this.CoverDockControls()
-    }
-    .width('100%')
-    .height(this.getCoverBottomDockHeight())
-    .padding({ left: 24, right: 24, bottom: 0 })
-    .justifyContent(FlexAlign.End)
-    .alignItems(HorizontalAlign.Center)
-    .opacity(this.getContentOpacity(0.88) * this.getImmersiveHiddenOpacity())
-    .translate({ x: 0, y: this.getContentTranslateY(0.88, 80) + this.getImmersiveControlsTranslateY() })
-    .hitTestBehavior(this.isCoverControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .zIndex(520)
-  }
-
-  @Builder
-  private CoverControlsOverlay() {
-    // 已废弃：底部控件现在由 CoverBottomDock 直接渲染，避免 Swiper / 旧 overlay 叠层抢事件。
-    Column()
-      .width(0)
-      .height(0)
-      .hitTestBehavior(HitTestMode.None)
-  }
-
-  @Builder
-  private MoreButtonHitLayer() {
-    Row()
-      .width(100)
-      .height(58)
-      .position({
-        x: this.getMoreButtonHotspotLeft(),
-        y: this.getMoreButtonHotspotTop() + this.getContentTranslateY(0.88, 120) + this.getImmersiveControlsTranslateY()
-      })
-      .backgroundColor(this.withAlpha('#000000', 0.001))
-      .hitTestBehavior(HitTestMode.Default)
-      .onClick(() => {
-        this.toggleMoreSheet()
-      })
-      .zIndex(240)
+    .hitTestBehavior(this.shouldShowCoverControlsInline() ? HitTestMode.Default : HitTestMode.None)
+    .onTouch((event: TouchEvent) => {
+      this.handleInlineControlsTouch(event)
+    })
   }
 
   build() {
@@ -3946,15 +3978,11 @@ struct SurfaceNowPlayingView {
         })
       }
 
-      if (this.shouldShowCoverBottomDock()) {
-        this.CoverBottomDock()
-      }
-
       if (!this.contentOnly && this.modalOverlayActive && !this.isLyricsPageVisible()) {
         this.OverlayMorphLayer()
       }
 
-      // 进度条已经在 CoverBottomDock 中真实渲染并接收触摸；旧的绝对定位命中层容易和底部按钮错位，禁用。
+      // 进度条已经在封面页布局流中真实渲染并接收触摸；旧的绝对定位命中层容易和底部按钮错位，禁用。
       if (false && this.shouldShowProgressHitLayer()) {
         this.ProgressHitLayer()
       }
