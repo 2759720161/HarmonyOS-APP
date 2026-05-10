@@ -38,10 +38,10 @@ struct Index {
   @State private loadingProgress: string = ''
   @State private lyricsProgress: number = 0
 
-  private readonly playerOpenDuration: number = 520
-  private readonly playerCloseDuration: number = 430
+  private readonly playerOpenDuration: number = 480
+  private readonly playerCloseDuration: number = 360
   private readonly tabSwitchDuration: number = 250
-  private readonly dragThreshold: number = 300
+  private readonly dragThreshold: number = 360
   private playerHideTask: number = -1
   private playerOpenTask: number = -1
   private coverThemeTaskToken: number = 0
@@ -176,9 +176,9 @@ struct Index {
   }
 
   private getNowPlayingContentOpacity(): number {
-    // 全屏内容层延后到 morph 空间动画基本落位后再显现。
-    // 避免封面页已经出现时，morph 层里的封面/歌名/歌手仍继续向上飞。
-    const t = this.clampProgress((this.playerProgress - 0.90) / 0.08)
+    // 参考视频2：完整播放器内容在卡片基本展开后接管，而不是等到最后一帧突然淡入。
+    // 这样 mini bar -> 大卡片 -> 全屏播放器的衔接更像同一个组件在放大。
+    const t = this.clampProgress((this.playerProgress - 0.68) / 0.20)
     return t * t * (3 - 2 * t)
   }
 
@@ -189,7 +189,8 @@ struct Index {
     if (!this.playerMounted) {
       return 1
     }
-    return 1 - this.transitionT(0.00, 0.10)
+    // 打开后立即交给 morph 层，避免出现 mini 与展开卡片双影。
+    return 1 - this.transitionT(0.00, 0.08)
   }
 
   private getMorphLayerOpacity(): number {
@@ -197,10 +198,9 @@ struct Index {
       return 0
     }
 
-    // morph 层在展开初段淡入，在 full 内容接管前淡出。
-    // 这样 full 封面页和 morph 封面不会重叠造成“往上飞”的残影。
-    const fadeIn = this.transitionT(0.00, 0.10)
-    const fadeOut = 1 - this.transitionT(0.94, 0.995)
+    // 视频2的主体是“卡片扩展”，所以 morph 层需要持续到 full 内容稳定后再退出。
+    const fadeIn = this.transitionT(0.00, 0.08)
+    const fadeOut = 1 - this.transitionT(0.84, 0.98)
     return fadeIn * fadeOut
   }
 
@@ -218,11 +218,13 @@ struct Index {
   }
 
   private getPageContentScale(): number {
-    return 1 - 0.025 * this.playerProgress
+    // 参考视频2背景列表几乎不缩放，只轻微后退。
+    return 1 - 0.012 * this.playerProgress
   }
 
   private getPageContentOpacity(): number {
-    return 1 - 0.42 * this.playerProgress
+    // 保留列表轮廓，配合灰色遮罩形成“底部 sheet 打开”的效果。
+    return 1 - 0.36 * this.playerProgress
   }
 
   private transitionT(start: number, end: number): number {
@@ -463,7 +465,7 @@ struct Index {
       Column()
         .width('100%')
         .height('100%')
-        .backgroundColor('rgba(0, 0, 0, 0.10)')
+        .backgroundColor('rgba(0, 0, 0, 0.16)')
         .opacity(this.playerMounted ? this.playerProgress : 0)
         .hitTestBehavior(HitTestMode.Transparent)
         .zIndex(10)
