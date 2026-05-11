@@ -42,6 +42,9 @@ struct Index {
   private readonly playerCloseDuration: number = 360
   private readonly tabSwitchDuration: number = 250
   private readonly dragThreshold: number = 360
+  private readonly miniCollapseProgress: number = 0.30
+  private readonly detailsFastFadeProgress: number = 0.05
+  private readonly detailsInterimOpacity: number = 0.50
   private playerHideTask: number = -1
   private playerOpenTask: number = -1
   private coverThemeTaskToken: number = 0
@@ -176,10 +179,18 @@ struct Index {
   }
 
   private getNowPlayingContentOpacity(): number {
-    // 参考视频2：完整播放器内容在卡片基本展开后接管，而不是等到最后一帧突然淡入。
-    // 这样 mini bar -> 大卡片 -> 全屏播放器的衔接更像同一个组件在放大。
-    const t = this.clampProgress((this.playerProgress - 0.68) / 0.20)
-    return t * t * (3 - 2 * t)
+    // 参考 MiniPlayerAnimation 案例：详情页在动画前 30% 内完成淡入。
+    // 0%-5% 先快速到 0.5，5%-30% 再补足到 1，避免视频1那种尾帧突然切换。
+    const p: number = this.clampProgress(this.playerProgress)
+    if (p <= this.detailsFastFadeProgress) {
+      return p * this.detailsInterimOpacity / this.detailsFastFadeProgress
+    }
+    if (p < this.miniCollapseProgress) {
+      return this.detailsInterimOpacity +
+        (p - this.detailsFastFadeProgress) * (1 - this.detailsInterimOpacity) /
+          (this.miniCollapseProgress - this.detailsFastFadeProgress)
+    }
+    return 1
   }
 
   private getMiniLayerOpacity(): number {
@@ -189,8 +200,8 @@ struct Index {
     if (!this.playerMounted) {
       return 1
     }
-    // 打开后立即交给 morph 层，避免出现 mini 与展开卡片双影。
-    return 1 - this.transitionT(0.00, 0.08)
+    // 参考案例中 mini 条在 0%-30% 区间从 1 淡到 0。
+    return 1 - this.clampProgress(this.playerProgress / this.miniCollapseProgress)
   }
 
   private getMorphLayerOpacity(): number {
@@ -198,9 +209,9 @@ struct Index {
       return 0
     }
 
-    // 视频2的主体是“卡片扩展”，所以 morph 层需要持续到 full 内容稳定后再退出。
-    const fadeIn = this.transitionT(0.00, 0.08)
-    const fadeOut = 1 - this.transitionT(0.84, 0.98)
+    // morph 层承载共享封面和扩展卡片：开头立即接管，尾段再退出。
+    const fadeIn = this.transitionT(0.00, 0.05)
+    const fadeOut = 1 - this.transitionT(0.90, 1.00)
     return fadeIn * fadeOut
   }
 
@@ -218,13 +229,20 @@ struct Index {
   }
 
   private getPageContentScale(): number {
-    // 参考视频2背景列表几乎不缩放，只轻微后退。
-    return 1 - 0.012 * this.playerProgress
+    // 参考案例重点是 mini/detail 两层联动，首页只做轻微后退。
+    return 1 - 0.010 * this.playerProgress
   }
 
   private getPageContentOpacity(): number {
-    // 保留列表轮廓，配合灰色遮罩形成“底部 sheet 打开”的效果。
-    return 1 - 0.36 * this.playerProgress
+    // 保留列表轮廓，靠遮罩表达层级，不让背景过早消失。
+    return 1 - 0.30 * this.playerProgress
+  }
+
+  private getBackdropOpacity(): number {
+    if (!this.playerMounted) {
+      return 0
+    }
+    return this.transitionT(0.00, this.miniCollapseProgress)
   }
 
   private transitionT(start: number, end: number): number {
@@ -236,7 +254,7 @@ struct Index {
     if (this.songCount <= 0) {
       return 0
     }
-    return 1 - this.transitionT(0.02, 0.16)
+    return 1 - this.transitionT(0.02, this.miniCollapseProgress)
   }
 
   private isFloatingTabInteractive(): boolean {
@@ -466,7 +484,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .backgroundColor('rgba(0, 0, 0, 0.16)')
-        .opacity(this.playerMounted ? this.playerProgress : 0)
+        .opacity(this.getBackdropOpacity())
         .hitTestBehavior(HitTestMode.Transparent)
         .zIndex(10)
 
