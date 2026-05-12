@@ -8,10 +8,10 @@ import { PlayMode, StorageKeys } from '../common/Constants'
 import { AudioScanner } from './AudioScanner'
 import { AVSessionManager } from './AVSessionManager'
 import { FavoriteManager } from './FavoriteManager'
-import { LocalMusicLibrary } from './LocalMusicLibrary'
 import { LrcApiService } from './LrcApiService'
 import { PlaylistManager } from './PlaylistManager'
 import { LyricService } from './LyricService'
+import { PermissionManager } from './PermissionManager'
 
 interface PlaybackPersistedState {
   songId: string
@@ -29,7 +29,7 @@ export class PlayerService {
   private avSessionMgr: AVSessionManager = new AVSessionManager()
   private playlistManager: PlaylistManager = PlaylistManager.getInstance()
   private favoriteManager: FavoriteManager = FavoriteManager.getInstance()
-  private localMusicLibrary: LocalMusicLibrary = LocalMusicLibrary.getInstance()
+  private permissionManager: PermissionManager = PermissionManager.getInstance()
   private currentFile: fileIo.File | null = null
   private lrcApiService: LrcApiService = LrcApiService.getInstance()
   private lyricService: LyricService = LyricService.getInstance()
@@ -179,10 +179,9 @@ export class PlayerService {
     const song = this.songList[index]
     let nextFile: fileIo.File | null = null
 
-    try {
-      nextFile = fileIo.openSync(song.uri, fileIo.OpenMode.READ_ONLY)
-    } catch (error) {
-      console.error('PlayerService', `Open song failed for ${song.uri}: ${JSON.stringify(error)}`)
+    nextFile = await this.permissionManager.openReadableFile(song.uri)
+    if (!nextFile) {
+      console.error('PlayerService', `Open song failed for ${song.uri}`)
       return
     }
 
@@ -296,7 +295,7 @@ export class PlayerService {
     }
   }
 
-  async deleteCurrentSong(deleteFile: boolean = false): Promise<boolean> {
+  async deleteCurrentSong(): Promise<boolean> {
     const song: SongInfo | null = this.getCurrentSong()
     if (!song) {
       return false
@@ -308,10 +307,6 @@ export class PlayerService {
 
     this.playlistManager.removeSong(song.id)
     void this.favoriteManager.removeFromFavorites(song.id)
-
-    if (deleteFile) {
-      this.localMusicLibrary.deleteImportedFile(song.uri)
-    }
 
     this.songList = this.playlistManager.getPlaylist()
     AppStorage.setOrCreate(StorageKeys.SONG_COUNT, this.songList.length)

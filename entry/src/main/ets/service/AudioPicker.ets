@@ -4,14 +4,12 @@ import { SongInfo } from '../model/SongInfo'
 import { PermissionManager } from './PermissionManager'
 import { MetadataParser } from './MetadataParser'
 import { PlaylistManager } from './PlaylistManager'
-import { LocalMusicLibrary } from './LocalMusicLibrary'
 
 export class AudioPicker {
   private static instance: AudioPicker | null = null
   private permissionManager: PermissionManager = PermissionManager.getInstance()
   private metadataParser: MetadataParser = MetadataParser.getInstance()
   private playlistManager: PlaylistManager = PlaylistManager.getInstance()
-  private localMusicLibrary: LocalMusicLibrary = LocalMusicLibrary.getInstance()
 
   private constructor() {}
 
@@ -59,31 +57,18 @@ export class AudioPicker {
 
       await this.permissionManager.activatePermissions(selectResult)
 
-      if (onProgress) {
-        onProgress('正在导入本地音乐库...', 0, selectResult.length)
-      }
-
-      const localUris = await this.localMusicLibrary.importUris(
-        context,
-        selectResult,
-        (current: number, total: number) => {
-          if (onProgress) {
-            onProgress('正在导入本地音乐库...', current, total)
-          }
-        }
-      )
-
-      if (localUris.length === 0) {
-        console.warn('AudioPicker', 'No audio files were copied into local storage')
+      const referencedUris = selectResult.filter((uri: string) => uri.length > 0)
+      if (referencedUris.length === 0) {
+        console.warn('AudioPicker', 'No selectable audio file URIs were returned')
         return []
       }
 
       if (onProgress) {
-        onProgress('正在解析音频文件...', 0, localUris.length)
+        onProgress('正在解析音频文件...', 0, referencedUris.length)
       }
 
       const songList = await this.metadataParser.parseMetadataBatch(
-        localUris,
+        referencedUris,
         (current: number, total: number) => {
           if (onProgress) {
             onProgress('正在解析音频文件...', current, total)

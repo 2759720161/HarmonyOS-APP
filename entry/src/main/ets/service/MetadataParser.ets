@@ -3,6 +3,7 @@ import { image } from '@kit.ImageKit'
 import { fileIo } from '@kit.CoreFileKit'
 import { SongInfo } from '../model/SongInfo'
 import { Colors } from '../common/Constants'
+import { PermissionManager } from './PermissionManager'
 
 export interface FilenameTitleArtist {
   title: string
@@ -15,6 +16,7 @@ export class MetadataParser {
   private readonly trackSampleRateKey: string = 'sample_rate'
   private readonly trackMimeTypeKey: string = 'mime_type'
   private readonly trackCodecMimeKey: string = 'codec_mime'
+  private permissionManager: PermissionManager = PermissionManager.getInstance()
 
   private constructor() {}
 
@@ -31,7 +33,10 @@ export class MetadataParser {
 
     try {
       extractor = await media.createAVMetadataExtractor()
-      fileHandle = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
+      fileHandle = await this.permissionManager.openReadableFile(uri)
+      if (!fileHandle) {
+        return null
+      }
       extractor.fdSrc = { fd: fileHandle.fd, offset: 0, length: -1 }
 
       const metadata = await extractor.fetchMetadata()
@@ -42,7 +47,7 @@ export class MetadataParser {
       let artist: string
 
       if (metadata.title && metadata.title.length > 0) {
-        const normalizedMetadataTitle = this.normalizeTitle(uri, metadata.title)
+        const normalizedMetadataTitle = this.normalizeTitle(metadata.title)
         const metadataArtist = metadata.artist || ''
         if (metadataArtist.length === 0 && filenameParsed.artist !== Colors.UNKNOWN_ARTIST) {
           title = filenameParsed.title
@@ -119,7 +124,10 @@ export class MetadataParser {
 
     try {
       extractor = await media.createAVMetadataExtractor()
-      fileHandle = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
+      fileHandle = await this.permissionManager.openReadableFile(uri)
+      if (!fileHandle) {
+        return null
+      }
       extractor.fdSrc = { fd: fileHandle.fd, offset: 0, length: -1 }
       return await extractor.fetchAlbumCover()
     } catch (error) {
@@ -135,15 +143,6 @@ export class MetadataParser {
     }
   }
 
-  private resolveTitle(uri: string, metadataTitle?: string): string {
-    if (metadataTitle && metadataTitle.length > 0) {
-      return this.normalizeTitle(uri, metadataTitle)
-    }
-
-    const parsed = this.parseFilenameToTitleArtist(uri)
-    return parsed.title
-  }
-
   private parseFilenameToTitleArtist(uri: string): FilenameTitleArtist {
     const fileName = uri.split('/').pop() || Colors.UNKNOWN_TITLE
     let rawName = fileName.replace(/\.[^/.]+$/, '')
@@ -151,8 +150,6 @@ export class MetadataParser {
       rawName = decodeURIComponent(rawName)
     } catch (_) {
     }
-
-    rawName = this.isManagedLocalLibraryUri(uri) ? this.stripManagedLocalLibraryPrefix(rawName) : rawName
 
     const separatorIndex = rawName.indexOf('-')
     if (separatorIndex >= 0) {
@@ -168,30 +165,16 @@ export class MetadataParser {
     return { title: trimmed.length > 0 ? trimmed : Colors.UNKNOWN_TITLE, artist: Colors.UNKNOWN_ARTIST }
   }
 
-  normalizeTitle(uri: string, title: string): string {
+  normalizeTitle(title: string): string {
     if (!title) {
       return Colors.UNKNOWN_TITLE
     }
 
-    const trimmedTitle = title.trim()
-    if (!this.isManagedLocalLibraryUri(uri)) {
-      return trimmedTitle
-    }
-
-    return this.stripManagedLocalLibraryPrefix(trimmedTitle)
+    return title.trim()
   }
 
   resolveTitleArtistFromFilename(uri: string): FilenameTitleArtist {
     return this.parseFilenameToTitleArtist(uri)
-  }
-
-  private stripManagedLocalLibraryPrefix(value: string): string {
-    const managedTitleMatch = value.match(/^[0-9a-f]{6,8}_+(.+)$/i)
-    if (managedTitleMatch && managedTitleMatch[1]) {
-      return managedTitleMatch[1].trim()
-    }
-
-    return value
   }
 
   private parseNumber(rawValue?: string): number {
@@ -256,7 +239,4 @@ export class MetadataParser {
     return this.getTrackNumber(audioTrack, this.trackBitrateKey)
   }
 
-  private isManagedLocalLibraryUri(uri: string): boolean {
-    return uri.includes('/imported_audio/') || uri.includes('\\imported_audio\\')
-  }
 }

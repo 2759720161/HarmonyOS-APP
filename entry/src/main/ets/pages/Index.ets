@@ -442,6 +442,8 @@ struct Index {
               .width('100%')
               .height('100%')
           }
+          .width('100%')
+          .height('100%')
           .tabBar(this.customTabBar(0, $r('sys.symbol.music'), '歌曲'))
 
           TabContent() {
@@ -449,8 +451,12 @@ struct Index {
               .width('100%')
               .height('100%')
           }
+          .width('100%')
+          .height('100%')
           .tabBar(this.customTabBar(1, $r('sys.symbol.heart'), '收藏'))
         }
+        .width('100%')
+        .height('100%')
         .vertical(false)
         .barPosition(BarPosition.End)
         .barMode(BarMode.Fixed)

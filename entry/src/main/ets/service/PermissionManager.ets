@@ -2,7 +2,8 @@ import { fileIo, fileShare } from '@kit.CoreFileKit'
 
 export class PermissionManager {
   private static instance: PermissionManager | null = null
-  private readonly operationMode: number = 2
+  private readonly operationMode: number = 1
+  private readonly legacyOperationMode: number = 2
 
   private constructor() {}
 
@@ -70,29 +71,36 @@ export class PermissionManager {
   }
 
   async ensureUriAccessible(uri: string): Promise<boolean> {
+    const fileHandle = await this.openReadableFile(uri)
+    if (fileHandle) {
+      fileIo.closeSync(fileHandle)
+      return true
+    }
+    return false
+  }
+
+  async openReadableFile(uri: string): Promise<fileIo.File | null> {
     if (!uri) {
-      return false
+      return null
     }
 
     if (this.requiresPickerPermission(uri)) {
-      try {
-        await fileShare.activatePermission([this.buildPolicy(uri)])
-      } catch (error) {
-        console.warn('PermissionManager', `Activate permission failed for ${uri}: ${JSON.stringify(error)}`)
-        return false
-      }
+      await this.activateUriPermission(uri, this.operationMode)
     }
 
-    let fileHandle: fileIo.File | null = null
     try {
-      fileHandle = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
-      return true
-    } catch (error) {
-      console.warn('PermissionManager', `Open URI failed for ${uri}: ${JSON.stringify(error)}`)
-      return false
-    } finally {
-      if (fileHandle) {
-        fileIo.closeSync(fileHandle)
+      return fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
+    } catch (readError) {
+      if (this.requiresPickerPermission(uri)) {
+        await this.activateUriPermission(uri, this.legacyOperationMode)
+      }
+
+      try {
+        return fileIo.openSync(uri, fileIo.OpenMode.READ_WRITE)
+      } catch (readWriteError) {
+        console.warn('PermissionManager',
+          `Open URI failed for ${uri}: read=${JSON.stringify(readError)}, readWrite=${JSON.stringify(readWriteError)}`)
+        return null
       }
     }
   }
@@ -111,14 +119,22 @@ export class PermissionManager {
     return validUris
   }
 
-  private buildPolicies(uris: string[]): fileShare.PolicyInfo[] {
-    return uris.map((uri: string) => this.buildPolicy(uri))
+  private async activateUriPermission(uri: string, operationMode: number): Promise<void> {
+    try {
+      await fileShare.activatePermission([this.buildPolicy(uri, operationMode)])
+    } catch (error) {
+      console.warn('PermissionManager', `Activate permission failed for ${uri}: ${JSON.stringify(error)}`)
+    }
   }
 
-  private buildPolicy(uri: string): fileShare.PolicyInfo {
+  private buildPolicies(uris: string[], operationMode: number = this.operationMode): fileShare.PolicyInfo[] {
+    return uris.map((uri: string) => this.buildPolicy(uri, operationMode))
+  }
+
+  private buildPolicy(uri: string, operationMode: number = this.operationMode): fileShare.PolicyInfo {
     return {
       uri: uri,
-      operationMode: this.operationMode
+      operationMode: operationMode
     }
   }
 

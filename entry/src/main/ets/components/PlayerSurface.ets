@@ -29,6 +29,7 @@ struct SurfaceMiniPlayer {
   @StorageLink('coverBackdropBottomColor') coverBackdropBottomColor: string = '#D8E2E3'
   @StorageLink('coverThemeAccentColor') coverThemeAccentColor: string = 'rgba(123, 127, 255, 1)'
   @StorageLink('coverThemeShadowColor') coverThemeShadowColor: string = 'rgba(0, 0, 0, 0.16)'
+  @StorageLink('isDarkMode') isDarkMode: boolean = false
 
   @Prop visible: boolean = true
   @Prop opacityValue: number = 1
@@ -81,19 +82,31 @@ struct SurfaceMiniPlayer {
   }
 
   private getMiniBackgroundStart(): string {
-    return this.withAlpha(this.coverBackdropTopColor, 1)
+    return this.withAlpha(this.coverBackdropTopColor, 0.24)
   }
 
   private getMiniBackgroundMiddle(): string {
-    return this.withAlpha(this.coverBackdropMiddleColor, 1)
+    return this.withAlpha(this.coverBackdropMiddleColor, 0.20)
   }
 
   private getMiniBackgroundEnd(): string {
-    return this.withAlpha(this.coverBackdropBottomColor, 1)
+    return this.withAlpha(this.coverBackdropBottomColor, 0.24)
   }
 
   private getMiniAccentBackground(): string {
     return this.withAlpha(this.coverThemeAccentColor, 0.22)
+  }
+
+  private getMiniMaterialBackground(): string {
+    return this.isDarkMode ? 'rgba(32, 34, 40, 0.58)' : 'rgba(255, 255, 255, 0.58)'
+  }
+
+  private getMiniMaterialBorderColor(): string {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.42)'
+  }
+
+  private getMiniNeutralButtonBackground(): string {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.30)'
   }
 
   private canOpen(): boolean {
@@ -201,7 +214,7 @@ struct SurfaceMiniPlayer {
       .width(34)
       .height(34)
       .margin({ left: 8 })
-      .backgroundColor($r('app.color.mini_player_neutral_button'))
+      .backgroundColor(this.getMiniNeutralButtonBackground())
       .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
       .onClick(() => {
         if (this.visible && this.interactive && this.opacityValue > 0.05) {
@@ -217,6 +230,8 @@ struct SurfaceMiniPlayer {
       bottom: this.bottomSafeHeight + 20 + this.dockBottomOffset
     })
     .borderRadius(30)
+    .backgroundColor(this.getMiniMaterialBackground())
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, { colorMode: ThemeColorMode.SYSTEM })
     .linearGradient({
       angle: 90,
       colors: [
@@ -225,6 +240,11 @@ struct SurfaceMiniPlayer {
         [this.getMiniBackgroundEnd(), 1.0]
       ]
     })
+    .border({
+      width: 0.5,
+      color: this.getMiniMaterialBorderColor()
+    })
+    .clip(true)
     .shadow(ShadowStyle.OUTER_FLOATING_SM)
     .opacity(this.visible ? this.opacityValue : 0)
     .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
@@ -812,6 +832,7 @@ struct SurfacePlayerMorphHost {
   @StorageLink('coverBackdropAccentGlowColor') coverBackdropAccentGlowColor: string = 'rgba(238, 228, 214, 1)'
   @StorageLink('coverThemeShadowColor') coverThemeShadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @StorageLink('coverThemeAccentColor') coverThemeAccentColor: string = Colors.DEFAULT_DOMINANT_COLOR
+  @StorageLink('isDarkMode') isDarkMode: boolean = false
 
   @Prop progress: number = 0
   @Prop visible: boolean = true
@@ -981,6 +1002,23 @@ struct SurfacePlayerMorphHost {
     return this.withAlpha(accent, alpha)
   }
 
+  private getMiniMaterialBackground(): string {
+    return this.isDarkMode ? 'rgba(32, 34, 40, 0.58)' : 'rgba(255, 255, 255, 0.58)'
+  }
+
+  private getMiniMaterialBorderColor(): string {
+    const alpha: number = (this.isDarkMode ? 0.16 : 0.42) * (1 - this.getT())
+    return this.isDarkMode ? `rgba(255, 255, 255, ${alpha})` : `rgba(255, 255, 255, ${alpha})`
+  }
+
+  private getMiniNeutralButtonBackground(): string {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.30)'
+  }
+
+  private getMorphGradientOpacity(): number {
+    return 0.22 + this.getT() * 0.78
+  }
+
   private getSharedElementOpacity(): number {
     return 1 - this.smooth(this.contentLayerProgress)
   }
@@ -1086,7 +1124,7 @@ struct SurfacePlayerMorphHost {
       }
       .width(34)
       .height(34)
-      .backgroundColor($r('app.color.mini_player_neutral_button'))
+      .backgroundColor(this.getMiniNeutralButtonBackground())
       .onClick(() => {
         PlayerService.getInstance().next()
       })
@@ -1172,6 +1210,13 @@ struct SurfacePlayerMorphHost {
       Column()
         .width('100%')
         .height('100%')
+        .backgroundColor(this.getMiniMaterialBackground())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, { colorMode: ThemeColorMode.SYSTEM })
+        .opacity(1 - this.getT())
+
+      Column()
+        .width('100%')
+        .height('100%')
         .backgroundColor(this.coverBackdropBaseColor)
         .linearGradient({
           angle: 135,
@@ -1181,6 +1226,7 @@ struct SurfacePlayerMorphHost {
             [this.coverBackdropBottomColor, 1.0]
           ]
         })
+        .opacity(this.getMorphGradientOpacity())
 
       Ellipse()
         .width(this.getCardWidth() * 1.12)
@@ -1204,6 +1250,10 @@ struct SurfacePlayerMorphHost {
     .height(this.getCardHeight())
     .position({ x: this.getCardX(), y: this.getCardY() })
     .borderRadius(this.getCardRadius())
+    .border({
+      width: 0.5,
+      color: this.getMiniMaterialBorderColor()
+    })
     .clip(true)
     .shadow({
       radius: 28 * (1 - this.getT()),
@@ -1355,10 +1405,7 @@ struct SurfaceNowPlayingView {
     this.closeDeleteDialog()
   }
   private readonly handleDeleteSongAction: () => void = () => {
-    void this.confirmDeleteCurrentSong(false)
-  }
-  private readonly handleDeleteFileAction: () => void = () => {
-    void this.confirmDeleteCurrentSong(true)
+    void this.confirmDeleteCurrentSong()
   }
   private readonly handleDeleteDialogCancel: () => void = () => {
     this.dismissDeleteDialog()
@@ -1415,8 +1462,7 @@ struct SurfaceNowPlayingView {
     builder: DeleteSongDialog({
       isDeletingSong: $isDeletingSong,
       onCancel: this.handleDeleteCancelAction,
-      onDeleteSong: this.handleDeleteSongAction,
-      onDeleteFile: this.handleDeleteFileAction
+      onDeleteSong: this.handleDeleteSongAction
     }),
     customStyle: true,
     alignment: DialogAlignment.Center,
@@ -2133,13 +2179,13 @@ struct SurfaceNowPlayingView {
     }, 2000)
   }
 
-  private async confirmDeleteCurrentSong(deleteFile: boolean): Promise<void> {
+  private async confirmDeleteCurrentSong(): Promise<void> {
     if (this.isDeletingSong) {
       return
     }
 
     this.isDeletingSong = true
-    const deleted: boolean = await PlayerService.getInstance().deleteCurrentSong(deleteFile)
+    const deleted: boolean = await PlayerService.getInstance().deleteCurrentSong()
     this.isDeletingSong = false
 
     if (!deleted) {

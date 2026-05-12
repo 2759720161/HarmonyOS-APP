@@ -310,9 +310,6 @@ export struct SongListView {
         }
         .width('100%')
         .layoutWeight(1)
-        .padding({
-          bottom: this.bottomSafeHeight + 230
-        })
         .edgeEffect(EdgeEffect.Spring)
         .onDidScroll((scrollOffset: number) => {
           this.updateMiniPlayerScrollOffset(scrollOffset)

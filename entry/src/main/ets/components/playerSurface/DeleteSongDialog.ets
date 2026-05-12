@@ -9,7 +9,6 @@ export struct DeleteSongDialog {
 
   onCancel?: () => void
   onDeleteSong?: () => void
-  onDeleteFile?: () => void
 
   private getCenteredDialogWidth(maxWidth: number): number {
     const width: number = this.screenWidthVp > 0 ? this.screenWidthVp : 360
@@ -18,7 +17,7 @@ export struct DeleteSongDialog {
 
   private getDeleteConfirmMessage(): string {
     const title = this.currentTitle.length > 0 ? this.currentTitle : '当前歌曲'
-    return `确定要删除「${title}」吗？`
+    return `确定要从歌曲列表中删除「${title}」吗？`
   }
 
   build() {
@@ -58,31 +57,14 @@ export struct DeleteSongDialog {
       })
 
       Button({ type: ButtonType.Normal, stateEffect: true }) {
-        Text('删除')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FF3B30')
-      }
-      .width('100%')
-      .height(42)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(18)
-      .enabled(!this.isDeletingSong)
-      .onClick(() => {
-        if (this.onDeleteSong) {
-          this.onDeleteSong()
-        }
-      })
-
-      Button({ type: ButtonType.Normal, stateEffect: true }) {
         if (this.isDeletingSong) {
           LoadingProgress()
             .width(22)
             .height(22)
             .color('#FF3B30')
         } else {
-          Text('同时删除文件')
-            .fontSize(16)
+          Text('从列表删除')
+            .fontSize(18)
             .fontWeight(FontWeight.Bold)
             .fontColor('#FF3B30')
         }
@@ -93,8 +75,8 @@ export struct DeleteSongDialog {
       .borderRadius(18)
       .enabled(!this.isDeletingSong)
       .onClick(() => {
-        if (this.onDeleteFile) {
-          this.onDeleteFile()
+        if (this.onDeleteSong) {
+          this.onDeleteSong()
         }
       })
     }

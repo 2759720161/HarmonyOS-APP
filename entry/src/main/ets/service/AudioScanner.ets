@@ -4,6 +4,7 @@ import { fileIo } from '@kit.CoreFileKit'
 import { effectKit } from '@kit.ArkGraphics2D'
 import { Colors, StorageKeys } from '../common/Constants'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
+import { PermissionManager } from './PermissionManager'
 
 /**
  * 音频文件工具类
@@ -25,7 +26,10 @@ export class AudioScanner {
     try {
       extractor = await media.createAVMetadataExtractor()
       // Picker返回的URI需要直接传入（含file://前缀），系统自动映射
-      fileHandle = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY)
+      fileHandle = await PermissionManager.getInstance().openReadableFile(uri)
+      if (!fileHandle) {
+        return null
+      }
       extractor.fdSrc = { fd: fileHandle.fd, offset: 0, length: -1 }
       const pixelMap = await extractor.fetchAlbumCover()
       return pixelMap

@@ -1,6 +1,155 @@
+import { image } from '@kit.ImageKit'
 import { SongInfo } from '../model/SongInfo'
 import { formatMs } from '../common/Constants'
 import { PlayerService } from '../service/PlayerService'
+import { AudioScanner } from '../service/AudioScanner'
+
+@Component
+struct SongCoverThumb {
+  @Prop song: SongInfo = new SongInfo('', '', '', '', 0, '')
+  @Prop isPlaying: boolean = false
+  @Prop isCurrentSong: boolean = false
+
+  @State private coverPixelMap: image.PixelMap | null = null
+  private loadToken: number = 0
+  private readonly coverSize: number = 44
+
+  aboutToAppear(): void {
+    void this.loadCover()
+  }
+
+  aboutToDisappear(): void {
+    this.loadToken += 1
+    this.releaseCover()
+  }
+
+  private releaseCover(): void {
+    if (this.coverPixelMap) {
+      this.coverPixelMap.release()
+      this.coverPixelMap = null
+    }
+  }
+
+  private async loadCover(): Promise<void> {
+    const token: number = this.loadToken + 1
+    this.loadToken = token
+    this.releaseCover()
+
+    if (this.song.coverUri.length > 0 || this.song.uri.length === 0) {
+      return
+    }
+
+    const pixelMap = await AudioScanner.extractAlbumCover(this.song.uri)
+    if (!pixelMap) {
+      return
+    }
+
+    if (token !== this.loadToken) {
+      pixelMap.release()
+      return
+    }
+
+    this.coverPixelMap = await this.createThumbPixelMap(pixelMap)
+  }
+
+  private async createThumbPixelMap(pixelMap: image.PixelMap): Promise<image.PixelMap> {
+    try {
+      const imageInfo = await pixelMap.getImageInfo()
+      const width: number = Math.max(1, imageInfo.size.width)
+      const height: number = Math.max(1, imageInfo.size.height)
+      const maxSide: number = Math.max(width, height)
+      const thumbSize: number = 96
+      if (maxSide <= thumbSize) {
+        return pixelMap
+      }
+
+      const scale: number = thumbSize / maxSide
+      const thumbPixelMap = await pixelMap.createScaledPixelMap(scale, scale)
+      pixelMap.release()
+      return thumbPixelMap
+    } catch (_) {
+      return pixelMap
+    }
+  }
+
+  @Builder
+  private PlayingBars() {
+    Row({ space: 2 }) {
+      ForEach([0, 1, 2], (i: number) => {
+        Column()
+          .width(3)
+          .height(this.isPlaying ? this.getBarHeight(i) : '4vp')
+          .backgroundColor(Color.White)
+          .borderRadius(2)
+          .animation(this.isPlaying ? {
+            duration: 600,
+            curve: Curve.EaseInOut,
+            delay: i * 150,
+            iterations: -1,
+            playMode: PlayMode.Alternate
+          } : {
+            duration: 300,
+            curve: Curve.EaseOut
+          })
+      })
+    }
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private CoverContent() {
+    if (this.song.coverUri.length > 0) {
+      Image(this.song.coverUri)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+        .draggable(false)
+    } else if (this.coverPixelMap) {
+      Image(this.coverPixelMap)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
+        .draggable(false)
+    } else {
+      Column() {
+        SymbolGlyph($r('sys.symbol.music'))
+          .fontSize(21)
+          .fontColor([this.isCurrentSong ? '#D9FFFFFF' : $r('sys.color.ohos_id_color_text_secondary')])
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(this.isCurrentSong ? 'rgba(255, 255, 255, 0.18)' : $r('app.color.mini_player_placeholder'))
+    }
+  }
+
+  build() {
+    Stack() {
+      this.CoverContent()
+
+      if (this.isCurrentSong) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0, 0, 0, 0.28)')
+
+        this.PlayingBars()
+      }
+    }
+    .width(this.coverSize)
+    .height(this.coverSize)
+    .borderRadius(10)
+    .clip(true)
+  }
+
+  private getBarHeight(index: number): string {
+    if (index === 0) return '18vp'
+    if (index === 1) return '10vp'
+    return '24vp'
+  }
+}
 
 @Component
 export struct SongItem {
@@ -17,42 +166,11 @@ export struct SongItem {
 
   build() {
     Row({ space: 12 }) {
-      Stack() {
-        if (this.isCurrentSong) {
-          Row({ space: 2 }) {
-            ForEach([0, 1, 2], (i: number) => {
-              Column()
-                .width(3)
-                .height(this.isPlaying ? this.getBarHeight(i) : '4vp')
-                .backgroundColor(Color.White)
-                .borderRadius(2)
-                .animation(this.isPlaying ? {
-                  duration: 600,
-                  curve: Curve.EaseInOut,
-                  delay: i * 150,
-                  iterations: -1,
-                  playMode: PlayMode.Alternate
-                } : {
-                  duration: 300,
-                  curve: Curve.EaseOut
-                })
-            })
-          }
-          .width(36)
-          .height(36)
-          .justifyContent(FlexAlign.Center)
-          .alignItems(VerticalAlign.Center)
-        } else {
-          Text(`${this.index + 1}`)
-            .fontSize(13)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .fontWeight(FontWeight.Medium)
-            .textAlign(TextAlign.Center)
-            .width(36)
-        }
-      }
-      .width(36)
-      .height(36)
+      SongCoverThumb({
+        song: this.song,
+        isPlaying: this.isPlaying,
+        isCurrentSong: this.isCurrentSong
+      })
 
       Column({ space: 4 }) {
         Text(this.song.title)
@@ -113,9 +231,4 @@ export struct SongItem {
     })
   }
 
-  private getBarHeight(index: number): string {
-    if (index === 0) return '18vp'
-    if (index === 1) return '10vp'
-    return '24vp'
-  }
 }
