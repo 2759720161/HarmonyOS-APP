@@ -38,8 +38,8 @@ struct Index {
   @State private loadingProgress: string = ''
   @State private lyricsProgress: number = 0
 
-  private readonly playerOpenDuration: number = 520
-  private readonly playerCloseDuration: number = 430
+  private readonly playerOpenDuration: number = 460
+  private readonly playerCloseDuration: number = 360
   private readonly tabSwitchDuration: number = 250
   private readonly dragThreshold: number = 300
   private playerHideTask: number = -1
@@ -176,10 +176,7 @@ struct Index {
   }
 
   private getNowPlayingContentOpacity(): number {
-    // 全屏内容层延后到 morph 空间动画基本落位后再显现。
-    // 避免封面页已经出现时，morph 层里的封面/歌名/歌手仍继续向上飞。
-    const t = this.clampProgress((this.playerProgress - 0.90) / 0.08)
-    return t * t * (3 - 2 * t)
+    return this.transitionT(0.78, 0.96)
   }
 
   private getMiniLayerOpacity(): number {
@@ -189,7 +186,7 @@ struct Index {
     if (!this.playerMounted) {
       return 1
     }
-    return 1 - this.transitionT(0.00, 0.10)
+    return 1 - this.transitionT(0.00, 0.08)
   }
 
   private getMorphLayerOpacity(): number {
@@ -197,10 +194,8 @@ struct Index {
       return 0
     }
 
-    // morph 层在展开初段淡入，在 full 内容接管前淡出。
-    // 这样 full 封面页和 morph 封面不会重叠造成“往上飞”的残影。
-    const fadeIn = this.transitionT(0.00, 0.10)
-    const fadeOut = 1 - this.transitionT(0.94, 0.995)
+    const fadeIn: number = this.transitionT(0.00, 0.08)
+    const fadeOut: number = 1 - this.transitionT(0.88, 0.98)
     return fadeIn * fadeOut
   }
 
@@ -209,8 +204,6 @@ struct Index {
   }
 
   private getMiniDockBottomOffset(): number {
-    // 播放器展开/收回期间，mini 的最终 dock 位置必须保持和打开前一致。
-    // 否则关闭尾帧会先出现在底部 tab 区域，再跳/飞回原位置。
     if (this.playerMounted) {
       return this.playerDockBottomOffset
     }
@@ -218,11 +211,15 @@ struct Index {
   }
 
   private getPageContentScale(): number {
-    return 1 - 0.025 * this.playerProgress
+    return 1 - 0.035 * this.transitionT(0.04, 0.68)
   }
 
   private getPageContentOpacity(): number {
-    return 1 - 0.42 * this.playerProgress
+    return 1 - 0.44 * this.transitionT(0.04, 0.70)
+  }
+
+  private getPageContentBlur(): number {
+    return 8 * this.transitionT(0.06, 0.78)
   }
 
   private transitionT(start: number, end: number): number {
@@ -234,11 +231,19 @@ struct Index {
     if (this.songCount <= 0) {
       return 0
     }
-    return 1 - this.transitionT(0.02, 0.16)
+    return 1 - this.transitionT(0.02, 0.36)
   }
 
   private isFloatingTabInteractive(): boolean {
-    return this.songCount > 0 && !this.playerMounted && this.playerProgress < 0.05
+    return this.songCount > 0 && !this.playerMounted && this.playerProgress < 0.05 && this.getFloatingTabOpacity() > 0.9
+  }
+
+  private getPlayerSurfaceZIndex(): number {
+    return this.playerProgress > 0.05 ? 60 : 30
+  }
+
+  private getFloatingTabVisibility(): Visibility {
+    return this.songCount > 0 && this.getFloatingTabOpacity() > 0.001 ? Visibility.Visible : Visibility.None
   }
 
   private switchTab(tabIndex: number): void {
@@ -263,7 +268,6 @@ struct Index {
     this.clearPlayerHideTask()
 
     this.playerDockBottomOffset = this.getMiniDockBottomOffset()
-    this.playerMounted = true
     this.playerProgress = 0
 
     this.playerOpenTask = setTimeout(() => {
@@ -272,6 +276,7 @@ struct Index {
         duration: this.playerOpenDuration,
         curve: Curve.Friction
       }, () => {
+        this.playerMounted = true
         this.playerProgress = 1
       })
     }, 16) as number
@@ -412,6 +417,10 @@ struct Index {
     return this.songCount > 0 && !this.playerMounted && this.playerProgress <= 0.001
   }
 
+  private shouldBuildPlayerSurface(): boolean {
+    return this.playerMounted || this.playerProgress > 0.001 || this.canOpenNowPlaying()
+  }
+
   @Builder
   private PlayerContainer() {
     PlayerSurface({
@@ -459,21 +468,25 @@ struct Index {
         centerY: '50%'
       })
       .opacity(this.getPageContentOpacity())
+      .blur(this.getPageContentBlur())
 
       Column()
         .width('100%')
         .height('100%')
         .backgroundColor('rgba(0, 0, 0, 0.10)')
         .opacity(this.playerMounted ? this.playerProgress : 0)
-        .hitTestBehavior(HitTestMode.Transparent)
+        .hitTestBehavior(HitTestMode.None)
         .zIndex(10)
 
-      Stack() {
-        this.PlayerContainer()
+      if (this.shouldBuildPlayerSurface()) {
+        Stack() {
+          this.PlayerContainer()
+        }
+        .width('100%')
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Transparent)
+        .zIndex(this.getPlayerSurfaceZIndex())
       }
-      .width('100%')
-      .height('100%')
-      .zIndex(30)
 
       Column() {
         FloatingTab({
@@ -492,6 +505,7 @@ struct Index {
         bottom: this.bottomSafeHeight + 24
       })
       .opacity(this.getFloatingTabOpacity())
+      .visibility(this.getFloatingTabVisibility())
       .hitTestBehavior(this.isFloatingTabInteractive() ? HitTestMode.Default : HitTestMode.None)
       .zIndex(40)
     }
