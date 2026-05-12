@@ -1,8 +1,6 @@
 import { image } from '@kit.ImageKit'
-import { effectKit } from '@kit.ArkGraphics2D'
-import { fileIo } from '@kit.CoreFileKit'
 import promptAction from '@ohos.promptAction'
-import { Colors, PlayMode, formatMs, getPlayModeIcon, StorageKeys } from '../common/Constants'
+import { Colors, PlayMode, formatMs, StorageKeys } from '../common/Constants'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 import { PlayerService } from '../service/PlayerService'
 import { PlaylistManager } from '../service/PlaylistManager'
@@ -12,7 +10,11 @@ import { LrcApiConfigService, LrcApiSettings } from '../service/LrcApiConfigServ
 import { LrcApiCoverResult, LrcApiService } from '../service/LrcApiService'
 import { LyricView } from './LyricView'
 import { LyricLine } from '../service/LyricParser'
-import { CoverThemeService } from '../service/CoverThemeService'
+import { MoreMenuDialog } from './playerSurface/MoreMenuDialog'
+import { OnlineSearchDialog } from './playerSurface/OnlineSearchDialog'
+import { DetailDialog } from './playerSurface/DetailDialog'
+import { DeleteSongDialog } from './playerSurface/DeleteSongDialog'
+import { ApiSettingsDialog } from './playerSurface/ApiSettingsDialog'
 
 @Component
 struct SurfaceMiniPlayer {
@@ -32,6 +34,7 @@ struct SurfaceMiniPlayer {
   @Prop opacityValue: number = 1
   @Prop interactive: boolean = true
   @Prop dockBottomOffset: number = 0
+  @Prop coverGeometryId: string = ''
 
   onOpen?: () => void
 
@@ -98,31 +101,48 @@ struct SurfaceMiniPlayer {
   }
 
   @Builder
-  private CoverThumb() {
-    Stack() {
-      if (this.coverPixelMap) {
-        Image(this.coverPixelMap)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .draggable(false)
-      } else {
-        Column() {
-          SymbolGlyph($r('sys.symbol.music'))
-            .fontSize(22)
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-        }
+  private CoverThumbBody() {
+    if (this.coverPixelMap) {
+      Image(this.coverPixelMap)
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.mini_player_placeholder'))
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
+        .objectFit(ImageFit.Cover)
+        .draggable(false)
+    } else {
+      Column() {
+        SymbolGlyph($r('sys.symbol.music'))
+          .fontSize(22)
+          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
       }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.mini_player_placeholder'))
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
     }
-    .width(44)
-    .height(44)
-    .borderRadius(14)
-    .clip(true)
+  }
+
+  @Builder
+  private CoverThumb() {
+    if (this.coverGeometryId.length > 0) {
+      Stack() {
+        this.CoverThumbBody()
+      }
+      .width(44)
+      .height(44)
+      .borderRadius(14)
+      .clip(true)
+      .geometryTransition(this.coverGeometryId)
+      .transition(TransitionEffect.OPACITY)
+    } else {
+      Stack() {
+        this.CoverThumbBody()
+      }
+      .width(44)
+      .height(44)
+      .borderRadius(14)
+      .clip(true)
+    }
   }
 
   build() {
@@ -213,12 +233,571 @@ struct SurfaceMiniPlayer {
 
 
 @Component
+struct PlayerProgressStrip {
+  @StorageLink('currentPosition') currentPosition: number = 0
+  @StorageLink('totalDuration') totalDuration: number = 0
+
+  @Prop accentColor: string = Colors.DEFAULT_DOMINANT_COLOR
+  @Prop trackColor: string = 'rgba(0, 0, 0, 0.16)'
+  @Prop interactive: boolean = true
+  @Prop timeWidth: number = 46
+  @Prop rowHeight: number = 34
+  @Prop fontSize: number = 12
+  @Prop trackThickness: number = 4
+  @Prop blockSizeValue: number = 12
+
+  @State private isSeeking: boolean = false
+  @State private seekValue: number = 0
+
+  private getProgressPercent(): number {
+    if (this.totalDuration <= 0) {
+      return 0
+    }
+    return Math.max(0, Math.min(100, this.currentPosition / this.totalDuration * 100))
+  }
+
+  private getDisplayPosition(): number {
+    if (this.isSeeking && this.totalDuration > 0) {
+      return (this.seekValue / 100) * this.totalDuration
+    }
+    return this.currentPosition
+  }
+
+  private commitSeek(percent: number): void {
+    const targetPercent: number = Math.max(0, Math.min(100, percent))
+    this.seekValue = targetPercent
+    if (this.totalDuration > 0) {
+      void PlayerService.getInstance().seekTo((targetPercent / 100) * this.totalDuration)
+    }
+    this.isSeeking = false
+  }
+
+  build() {
+    Row({ space: 8 }) {
+      Text(formatMs(this.getDisplayPosition()))
+        .width(this.timeWidth)
+        .flexShrink(0)
+        .fontSize(this.fontSize)
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .textAlign(TextAlign.Start)
+
+      Slider({
+        value: this.isSeeking ? this.seekValue : this.getProgressPercent(),
+        min: 0,
+        max: 100,
+        step: 0.1,
+        style: SliderStyle.OutSet
+      })
+        .layoutWeight(1)
+        .height(this.rowHeight)
+        .trackColor(this.trackColor)
+        .selectedColor(this.accentColor)
+        .blockColor($r('sys.color.ohos_id_color_text_primary'))
+        .blockSize({ width: this.blockSizeValue, height: this.blockSizeValue })
+        .trackThickness(this.trackThickness)
+        .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (!this.interactive) {
+            return
+          }
+          if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+            this.isSeeking = true
+            this.seekValue = value
+          } else if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+            this.commitSeek(value)
+          }
+        })
+
+      Text(formatMs(this.totalDuration))
+        .width(this.timeWidth)
+        .flexShrink(0)
+        .fontSize(this.fontSize)
+        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+        .textAlign(TextAlign.End)
+    }
+    .width('100%')
+    .height(this.rowHeight)
+    .alignItems(VerticalAlign.Center)
+  }
+}
+
+
+@Component
+struct NowPlayingCoverSection {
+  @StorageLink('coverVersion') @Watch('syncCover') coverVersion: number = 0
+
+  @Prop sizeValue: number = 0
+  @Prop left: number = 0
+  @Prop top: number = 0
+  @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
+  @Prop opacityValue: number = 1
+
+  @State private coverPixelMap: image.PixelMap | null = null
+
+  aboutToAppear(): void {
+    this.syncCover()
+  }
+
+  private syncCover(): void {
+    const pm = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
+    this.coverPixelMap = pm ? pm as image.PixelMap : null
+  }
+
+  build() {
+    if (this.coverPixelMap) {
+      Image(this.coverPixelMap)
+        .width(this.sizeValue)
+        .height(this.sizeValue)
+        .borderRadius(this.sizeValue * 0.12)
+        .objectFit(ImageFit.Cover)
+        .shadow({
+          radius: 36,
+          color: this.shadowColor,
+          offsetX: 0,
+          offsetY: 0
+        })
+        .position({ x: this.left, y: this.top })
+        .opacity(this.opacityValue)
+    } else {
+      Column() {
+        SymbolGlyph($r('sys.symbol.music'))
+          .fontSize(this.sizeValue * 0.22)
+          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+      }
+      .width(this.sizeValue)
+      .height(this.sizeValue)
+      .borderRadius(this.sizeValue * 0.12)
+      .backgroundColor('rgba(255, 255, 255, 0.58)')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .shadow({
+        radius: 36,
+        color: this.shadowColor,
+        offsetX: 0,
+        offsetY: 0
+      })
+      .position({ x: this.left, y: this.top })
+      .opacity(this.opacityValue)
+    }
+  }
+}
+
+
+@Component
+struct NowPlayingSongInfoSection {
+  @StorageLink('currentTitle') currentTitle: string = ''
+  @StorageLink('currentArtist') currentArtist: string = ''
+
+  @Prop widthValue: number = 0
+  @Prop left: number = 0
+  @Prop top: number = 0
+  @Prop primaryColor: string = '#202020'
+  @Prop secondaryColor: string = '#666666'
+  @Prop opacityValue: number = 1
+
+  build() {
+    Column({ space: 4 }) {
+      Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
+        .width('100%')
+        .height(38)
+        .fontSize(27)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.primaryColor)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(this.currentArtist.length > 0 ? this.currentArtist : 'Unknown artist')
+        .width('100%')
+        .height(24)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.secondaryColor)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width(this.widthValue)
+    .height(66)
+    .position({ x: this.left, y: this.top })
+    .opacity(this.opacityValue)
+  }
+}
+
+
+@Component
+struct NowPlayingProgressSection {
+  @Prop accentColor: string = Colors.DEFAULT_DOMINANT_COLOR
+  @Prop trackColor: string = 'rgba(0, 0, 0, 0.13)'
+  @Prop interactive: boolean = true
+
+  build() {
+    PlayerProgressStrip({
+      accentColor: this.accentColor,
+      trackColor: this.trackColor,
+      interactive: this.interactive,
+      timeWidth: 44,
+      rowHeight: 34,
+      fontSize: 13,
+      trackThickness: 5,
+      blockSizeValue: 12
+    })
+  }
+}
+
+
+@Component
+struct PreviousTrackButton {
+  @Prop iconColor: string = '#202020'
+  @Prop interactive: boolean = true
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.backward_end_fill'))
+        .fontSize(36)
+        .fontColor([this.iconColor])
+    }
+    .width(64)
+    .height(64)
+    .borderRadius(32)
+    .backgroundColor(Color.Transparent)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      PlayerService.getInstance().prev()
+    })
+  }
+}
+
+
+@Component
+struct PlayPauseTrackButton {
+  @StorageLink('isPlaying') isPlaying: boolean = false
+
+  @Prop iconColor: string = '#202020'
+  @Prop interactive: boolean = true
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+        .fontSize(48)
+        .fontColor([this.iconColor])
+    }
+    .width(78)
+    .height(78)
+    .borderRadius(39)
+    .backgroundColor('rgba(255, 255, 255, 0.28)')
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      PlayerService.getInstance().togglePlayPause()
+    })
+  }
+}
+
+
+@Component
+struct NextTrackButton {
+  @Prop iconColor: string = '#202020'
+  @Prop interactive: boolean = true
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.forward_end_fill'))
+        .fontSize(36)
+        .fontColor([this.iconColor])
+    }
+    .width(64)
+    .height(64)
+    .borderRadius(32)
+    .backgroundColor(Color.Transparent)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      PlayerService.getInstance().next()
+    })
+  }
+}
+
+
+@Component
+struct MoreMenuControlButton {
+  @Prop iconColor: string = '#666666'
+  @Prop interactive: boolean = true
+
+  onAction?: () => void
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.dot_grid_1x2'))
+        .fontSize(28)
+        .fontColor([this.iconColor])
+    }
+    .width(76)
+    .height(54)
+    .borderRadius(27)
+    .backgroundColor(Color.Transparent)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      if (this.onAction) {
+        this.onAction()
+      }
+    })
+  }
+}
+
+
+@Component
+struct PlayModeControlButton {
+  @StorageLink('playMode') playMode: number = PlayMode.SEQUENCE
+
+  @Prop iconColor: string = '#666666'
+  @Prop interactive: boolean = true
+
+  private getNextPlayMode(): PlayMode {
+    if (this.playMode === PlayMode.SEQUENCE) {
+      return PlayMode.SINGLE
+    }
+    if (this.playMode === PlayMode.SINGLE) {
+      return PlayMode.SHUFFLE
+    }
+    return PlayMode.SEQUENCE
+  }
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.repeat'))
+        .fontSize(30)
+        .fontColor([this.iconColor])
+    }
+    .width(76)
+    .height(54)
+    .borderRadius(27)
+    .backgroundColor(Color.Transparent)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      PlayerService.getInstance().setPlayMode(this.getNextPlayMode())
+    })
+  }
+}
+
+
+@Component
+struct PlaylistControlButton {
+  @Prop iconColor: string = '#666666'
+  @Prop interactive: boolean = true
+
+  onAction?: () => void
+
+  build() {
+    Button({ type: ButtonType.Normal, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.music_note_list'))
+        .fontSize(30)
+        .fontColor([this.iconColor])
+    }
+    .width(76)
+    .height(54)
+    .borderRadius(27)
+    .backgroundColor(Color.Transparent)
+    .clickEffect({ level: ClickEffectLevel.LIGHT, scale: 0.9 })
+    .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
+    .onClick(() => {
+      if (this.onAction) {
+        this.onAction()
+      }
+    })
+  }
+}
+
+
+@Component
+struct NowPlayingPanel {
+  @Prop screenWidth: number = 0
+  @Prop screenHeight: number = 0
+  @Prop coverSize: number = 0
+  @Prop coverLeft: number = 0
+  @Prop coverTop: number = 0
+  @Prop titleWidth: number = 0
+  @Prop titleLeft: number = 0
+  @Prop titleTop: number = 0
+  @Prop bottomSafeHeight: number = 0
+  @Prop primaryColor: string = '#202020'
+  @Prop secondaryColor: string = '#666666'
+  @Prop accentColor: string = Colors.DEFAULT_DOMINANT_COLOR
+  @Prop trackColor: string = 'rgba(0, 0, 0, 0.13)'
+  @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
+  @Prop contentOpacity: number = 1
+  @Prop controlsInteractive: boolean = true
+
+  onMoreClick?: () => void
+  onPlaylistClick?: () => void
+
+  private getHorizontalPadding(): number {
+    return this.getScreenWidth() >= 360 ? 24 : 18
+  }
+
+  private getBottomPadding(): number {
+    return Math.max(0, this.bottomSafeHeight) + 42
+  }
+
+  private getScreenWidth(): number {
+    return this.screenWidth > 0 ? this.screenWidth : 360
+  }
+
+  private getScreenHeight(): number {
+    return this.screenHeight > 0 ? this.screenHeight : 800
+  }
+
+  private getProgressWidth(): number {
+    return Math.max(1, this.getScreenWidth() - this.getHorizontalPadding() * 2)
+  }
+
+  private getSecondaryTop(): number {
+    return this.getScreenHeight() - this.getBottomPadding() - 54
+  }
+
+  private getPrimaryTop(): number {
+    return this.getSecondaryTop() - 22 - this.getPrimaryPlaySize()
+  }
+
+  private getProgressTop(): number {
+    return this.getPrimaryTop() - 28 - 34
+  }
+
+  private getPrimarySideSize(): number {
+    return 64
+  }
+
+  private getPrimaryPlaySize(): number {
+    return 78
+  }
+
+  private getPrimaryGap(): number {
+    return 38
+  }
+
+  private getPrimaryPlayLeft(): number {
+    return this.getScreenWidth() / 2 - this.getPrimaryPlaySize() / 2
+  }
+
+  private getPrimaryPreviousLeft(): number {
+    return this.getPrimaryPlayLeft() - this.getPrimaryGap() - this.getPrimarySideSize()
+  }
+
+  private getPrimaryNextLeft(): number {
+    return this.getPrimaryPlayLeft() + this.getPrimaryPlaySize() + this.getPrimaryGap()
+  }
+
+  private getPrimarySideTop(): number {
+    return this.getPrimaryTop() + (this.getPrimaryPlaySize() - this.getPrimarySideSize()) / 2
+  }
+
+  private getSecondaryStartLeft(): number {
+    return (this.getScreenWidth() - 296) / 2
+  }
+
+  private getSecondaryModeLeft(): number {
+    return this.getSecondaryStartLeft() + 110
+  }
+
+  private getSecondaryPlaylistLeft(): number {
+    return this.getSecondaryStartLeft() + 220
+  }
+
+  build() {
+    Stack() {
+      NowPlayingSongInfoSection({
+        widthValue: this.titleWidth,
+        left: this.titleLeft,
+        top: this.titleTop,
+        primaryColor: this.primaryColor,
+        secondaryColor: this.secondaryColor,
+        opacityValue: this.contentOpacity
+      })
+
+      NowPlayingCoverSection({
+        sizeValue: this.coverSize,
+        left: this.coverLeft,
+        top: this.coverTop,
+        shadowColor: this.shadowColor,
+        opacityValue: 1
+      })
+
+      NowPlayingProgressSection({
+        accentColor: this.accentColor,
+        trackColor: this.trackColor,
+        interactive: this.controlsInteractive
+      })
+        .width(this.getProgressWidth())
+        .height(34)
+        .position({ x: this.getHorizontalPadding(), y: this.getProgressTop() })
+        .opacity(this.contentOpacity)
+
+      PreviousTrackButton({
+        iconColor: this.primaryColor,
+        interactive: this.controlsInteractive
+      })
+        .position({ x: this.getPrimaryPreviousLeft(), y: this.getPrimarySideTop() })
+        .opacity(this.contentOpacity)
+
+      PlayPauseTrackButton({
+        iconColor: this.primaryColor,
+        interactive: this.controlsInteractive
+      })
+        .position({ x: this.getPrimaryPlayLeft(), y: this.getPrimaryTop() })
+        .opacity(this.contentOpacity)
+
+      NextTrackButton({
+        iconColor: this.primaryColor,
+        interactive: this.controlsInteractive
+      })
+        .position({ x: this.getPrimaryNextLeft(), y: this.getPrimarySideTop() })
+        .opacity(this.contentOpacity)
+
+      MoreMenuControlButton({
+        iconColor: this.secondaryColor,
+        interactive: this.controlsInteractive,
+        onAction: () => {
+          if (this.onMoreClick) {
+            this.onMoreClick()
+          }
+        }
+      })
+        .position({ x: this.getSecondaryStartLeft(), y: this.getSecondaryTop() })
+        .opacity(this.contentOpacity)
+
+      PlayModeControlButton({
+        iconColor: this.secondaryColor,
+        interactive: this.controlsInteractive
+      })
+        .position({ x: this.getSecondaryModeLeft(), y: this.getSecondaryTop() })
+        .opacity(this.contentOpacity)
+
+      PlaylistControlButton({
+        iconColor: this.secondaryColor,
+        interactive: this.controlsInteractive,
+        onAction: () => {
+          if (this.onPlaylistClick) {
+            this.onPlaylistClick()
+          }
+        }
+      })
+        .position({ x: this.getSecondaryPlaylistLeft(), y: this.getSecondaryTop() })
+        .opacity(this.contentOpacity)
+    }
+    .width('100%')
+    .height('100%')
+  }
+}
+
+
+@Component
 struct SurfacePlayerMorphHost {
   @StorageLink('isPlaying') isPlaying: boolean = false
   @StorageLink('currentTitle') currentTitle: string = ''
   @StorageLink('currentArtist') currentArtist: string = ''
-  @StorageLink('currentPosition') currentPosition: number = 0
-  @StorageLink('totalDuration') totalDuration: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('screenWidthVp') screenWidthVp: number = 0
@@ -240,6 +819,7 @@ struct SurfacePlayerMorphHost {
   @Prop dockBottomOffset: number = 0
   @Prop lyricsProgress: number = 0
   @Prop contentLayerProgress: number = 0
+  @Prop coverGeometryId: string = ''
 
   onClose?: () => void
 
@@ -365,13 +945,6 @@ struct SurfacePlayerMorphHost {
     return this.smooth((this.progress - 0.70) / 0.18)
   }
 
-  private getProgressPercent(): number {
-    if (this.totalDuration <= 0) {
-      return 0
-    }
-    return this.clamp01(this.currentPosition / this.totalDuration) * 100
-  }
-
   private normalizeAlpha(alpha: number): number {
     return Math.max(0, Math.min(1, alpha))
   }
@@ -413,26 +986,31 @@ struct SurfacePlayerMorphHost {
   }
 
   @Builder
-  private Cover() {
-    Stack() {
-      if (this.coverPixelMap) {
-        Image(this.coverPixelMap)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .draggable(false)
-      } else {
-        Column() {
-          SymbolGlyph($r('sys.symbol.music'))
-            .fontSize(this.lerp(20, 108, this.getT()))
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-        }
+  private CoverBody() {
+    if (this.coverPixelMap) {
+      Image(this.coverPixelMap)
         .width('100%')
         .height('100%')
-        .backgroundColor($r('app.color.mini_player_placeholder'))
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
+        .objectFit(ImageFit.Cover)
+        .draggable(false)
+    } else {
+      Column() {
+        SymbolGlyph($r('sys.symbol.music'))
+          .fontSize(this.lerp(20, 108, this.getT()))
+          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
       }
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.mini_player_placeholder'))
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+    }
+  }
+
+  @Builder
+  private CoverFrame(withGeometryTransition: boolean) {
+    Stack() {
+      this.CoverBody()
     }
     .width(this.getCoverSize())
     .height(this.getCoverSize())
@@ -449,6 +1027,14 @@ struct SurfacePlayerMorphHost {
       offsetX: 0,
       offsetY: 10
     })
+    .renderGroup(true)
+    .geometryTransition(withGeometryTransition ? this.coverGeometryId : '')
+    .transition(withGeometryTransition ? TransitionEffect.OPACITY : TransitionEffect.IDENTITY)
+  }
+
+  @Builder
+  private Cover() {
+    this.CoverFrame(this.coverGeometryId.length > 0)
   }
 
   @Builder
@@ -514,46 +1100,18 @@ struct SurfacePlayerMorphHost {
   }
 
   @Builder
-  private MorphProgressBar() {
-    Stack({ alignContent: Alignment.Start }) {
-      Row()
-        .width('100%')
-        .height(4)
-        .backgroundColor('rgba(0, 0, 0, 0.16)')
-        .borderRadius(2)
-
-      Row()
-        .width(`${this.getProgressPercent()}%`)
-        .height(4)
-        .backgroundColor(this.dominantColor)
-        .borderRadius(2)
-    }
-    .width('100%')
-    .height(8)
-  }
-
-  @Builder
   private FullControls() {
     Column({ space: 18 }) {
-      Row() {
-        Text(formatMs(this.currentPosition))
-          .width(42)
-          .fontSize(12)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-
-        Column() {
-          this.MorphProgressBar()
-        }
-        .layoutWeight(1)
-
-        Text(formatMs(this.totalDuration))
-          .width(42)
-          .fontSize(12)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          .textAlign(TextAlign.End)
-      }
-      .width('86%')
-      .alignItems(VerticalAlign.Center)
+      PlayerProgressStrip({
+        accentColor: this.dominantColor,
+        trackColor: 'rgba(0, 0, 0, 0.16)',
+        interactive: false,
+        timeWidth: 42,
+        rowHeight: 34,
+        trackThickness: 4,
+        blockSizeValue: 10
+      })
+        .width('86%')
 
       Row({ space: 34 }) {
         Button({ type: ButtonType.Normal, stateEffect: true }) {
@@ -653,6 +1211,7 @@ struct SurfacePlayerMorphHost {
       offsetX: 0,
       offsetY: 8
     })
+    .renderGroup(true)
   }
 
   build() {
@@ -691,39 +1250,12 @@ struct SurfacePlayerMorphHost {
 }
 
 
-interface CoverThemeRgb {
-  red: number
-  green: number
-  blue: number
-}
-
-interface CoverPageTheme {
-  baseColor: string
-  topColor: string
-  middleColor: string
-  bottomColor: string
-  veilColor: string
-  glowColor: string
-  glowAccentColor: string
-  primaryColor: string
-  secondaryColor: string
-  tertiaryColor: string
-  progressTrackColor: string
-  shadowColor: string
-}
-
-const CoverPageThemeCache: Map<string, CoverPageTheme> = new Map<string, CoverPageTheme>()
-
 @Component
 struct SurfaceNowPlayingView {
-  @StorageLink('isPlaying') isPlaying: boolean = false
-  @StorageLink('playMode') playMode: number = PlayMode.SEQUENCE
   @StorageLink('currentIndex') currentIndex: number = -1
-  @StorageLink('currentPosition') @Watch('onPositionChange') currentPosition: number = 0
-  @StorageLink('totalDuration') @Watch('onDurationChange') totalDuration: number = 0
+  @StorageLink('totalDuration') totalDuration: number = 0
   @StorageLink('currentTitle') currentTitle: string = ''
   @StorageLink('currentArtist') currentArtist: string = ''
-  @StorageLink('coverVersion') @Watch('syncCover') coverVersion: number = 0
   @StorageLink('topSafeHeight') topSafeHeight: number = 0
   @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
   @StorageLink('screenHeightVp') screenHeightVp: number = 0
@@ -732,173 +1264,42 @@ struct SurfaceNowPlayingView {
   @StorageLink('dominantColor') dominantColor: string = Colors.DEFAULT_DOMINANT_COLOR
   @StorageLink('lyricLines') lyricLines: LyricLine[] = []
   @StorageLink('lyricIndex') lyricIndex: number = -1
-  @StorageLink('favoriteIds') favoriteIdsStr: string = '[]'
   @StorageLink('modalOverlayActive') modalOverlayActive: boolean = false
   @StorageLink('immersiveModeActive') immersiveModeActive: boolean = false
   @StorageLink('immersiveModeProgress') immersiveModeProgress: number = 0
 
-  @Prop expandProgress: number = 1
-  @Prop contentOnly: boolean = false
   @Prop activeContent: boolean = false
-  @Prop @Watch('onExternalMoreSheetRequestChange') externalMoreSheetRequest: number = 0
-  @Prop @Watch('onExternalDismissRequestChange') externalDismissRequest: number = 0
   onClose?: () => void
   onSwipeUpdate?: (offsetY: number) => void
   onSwipeEnd?: (velocityY: number) => void
   onLyricsProgress?: (progress: number) => void
 
-  private getContentOpacity(threshold: number): number {
-    const p = this.expandProgress
-    if (p < threshold) {
-      return 0
-    }
-    return Math.min(1, (p - threshold) / (1 - threshold))
-  }
-
-  private getContentTranslateY(threshold: number, distance: number = 30): number {
-    const p = this.expandProgress
-    if (p < threshold) {
-      return distance
-    }
-    return distance * (1 - Math.min(1, (p - threshold) / (1 - threshold)))
-  }
-
-  private transitionT(start: number, end: number): number {
-    const t = Math.max(0, Math.min(1, (this.expandProgress - start) / (end - start)))
-    return t * t * (3 - 2 * t)
-  }
-
-  private getBgOpacity(): number {
-    // PlayerSurface 单组件结构下，SurfaceNowPlayingView 以 contentOnly=true 常驻在 full 层。
-    // full 层外部已经由 contentLayerProgress 控制整体淡入淡出；这里不能再返回 0，
-    // 否则封面页的取色背景会被关闭，只剩半透明 veil/遮罩。
-    if (this.contentOnly) {
-      return 1
-    }
-    return this.transitionT(0.72, 0.92)
-  }
-
-  private getCoverPageRealContentOpacity(): number {
-    return this.transitionT(0.92, 1.0)
-  }
-
-  private getMoreSheetBottomReserve(): number {
-    // PlayerSurface 外层已经常驻一套真实播放控制 Dock。
-    // 更多菜单弹出时不能再把 Dock 隐藏，也不能让底部 sheet 覆盖 Dock，
-    // 因此在 contentOnly 模式下让菜单面板停靠在 Dock 上方。
-    if (!this.contentOnly) {
-      return 0
-    }
-    return this.bottomSafeHeight + 292
-  }
-
-  private onExternalMoreSheetRequestChange(): void {
-    if (this.externalMoreSheetRequest <= 0 || this.externalMoreSheetRequest <= this.lastExternalMoreSheetRequest) {
-      return
-    }
-
-    this.lastExternalMoreSheetRequest = this.externalMoreSheetRequest
-
-    if (this.externalMoreSheetTask >= 0) {
-      clearTimeout(this.externalMoreSheetTask)
-      this.externalMoreSheetTask = -1
-    }
-
-    const requestId: number = this.externalMoreSheetRequest
-    this.externalMoreSheetTask = setTimeout(() => {
-      this.externalMoreSheetTask = -1
-
-      if (requestId !== this.externalMoreSheetRequest) {
-        return
-      }
-      if (this.currentIndex < 0 || this.currentTitle.length === 0) {
-        return
-      }
-      if (this.isLyricsPageVisible() || this.isImmersiveModeShowing()) {
-        return
-      }
-      if (this.isMoreSheetVisible) {
-        return
-      }
-      this.openMoreSheet()
-    }, 0)
-  }
-
-  private onExternalDismissRequestChange(): void {
-    if (this.externalDismissRequest <= 0 || this.externalDismissRequest <= this.lastExternalDismissRequest) {
-      return
-    }
-
-    this.lastExternalDismissRequest = this.externalDismissRequest
-
-    if (this.externalDismissTask >= 0) {
-      clearTimeout(this.externalDismissTask)
-      this.externalDismissTask = -1
-    }
-
-    const requestId: number = this.externalDismissRequest
-    this.externalDismissTask = setTimeout(() => {
-      this.externalDismissTask = -1
-      if (requestId !== this.externalDismissRequest) {
-        return
-      }
-      this.dismissTopOverlay()
-    }, 0)
-  }
-
-  private dismissTopOverlay(): void {
-    if (this.isApiSettingsDialogVisible) {
-      this.closeApiSettingsDialog(false)
-      return
-    }
-    if (this.isDeleteDialogVisible) {
-      this.closeDeleteDialog()
-      return
-    }
-    if (this.isDetailDialogVisible) {
-      this.closeDetailDialog()
-      return
-    }
-    if (this.isOnlineSearchPopupVisible) {
-      this.closeOnlineSearchPopup()
-      return
-    }
-    if (this.isMoreSheetVisible) {
-      this.closeMoreSheet()
-    }
-  }
-
   private shouldBuildActiveContent(): boolean {
-    return this.activeContent || this.expandProgress > 0.96
+    return this.activeContent
   }
 
-  @State private coverPixelMap: image.PixelMap | null = null
+  private canUsePlaybackControls(): boolean {
+    return !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
+  }
+
+  private hasLocalOverlayVisible(): boolean {
+    return this.isMoreSheetVisible || this.isOnlineSearchPopupVisible || this.isDetailDialogVisible ||
+      this.isApiSettingsDialogVisible || this.isDeleteDialogVisible
+  }
+
   @StorageLink('coverBackdropBaseColor') coverBackdropBaseColor: string = '#F8FAFB'
   @StorageLink('coverBackdropTopColor') coverBackdropTopColor: string = '#E8F1F2'
   @StorageLink('coverBackdropMiddleColor') coverBackdropMiddleColor: string = '#EDF2F0'
   @StorageLink('coverBackdropBottomColor') coverBackdropBottomColor: string = '#D8E2E3'
-  @StorageLink('coverBackdropVeilColor') coverBackdropVeilColor: string = 'rgba(255, 255, 255, 0.02)'
-  @StorageLink('coverBackdropGlowColor') coverBackdropGlowColor: string = 'rgba(232, 241, 242, 1)'
-  @StorageLink('coverBackdropAccentGlowColor') coverBackdropAccentGlowColor: string = 'rgba(216, 226, 227, 1)'
   @StorageLink('coverThemePrimaryColor') coverPagePrimaryColor: string = '#202020'
   @StorageLink('coverThemeSecondaryColor') coverPageSecondaryColor: string = 'rgba(32, 32, 32, 0.68)'
-  @State private coverPageTertiaryColor: string = 'rgba(32, 32, 32, 0.46)'
-  @State private coverPageProgressTrackColor: string = 'rgba(32, 32, 32, 0.18)'
   @StorageLink('coverThemeShadowColor') coverPageShadowColor: string = 'rgba(0, 0, 0, 0.16)'
-  @State private isSeeking: boolean = false
-  @State private seekValue: number = 0
-  @State private progressPercent: number = 0
   @State private isMoreSheetVisible: boolean = false
   @State private isOnlineSearchPopupVisible: boolean = false
   @State private isDetailDialogVisible: boolean = false
   @State private isApiSettingsDialogVisible: boolean = false
   @State private isDeleteDialogVisible: boolean = false
   @State private activeOnlineSearchItem: string = ''
-  @State private moreSheetProgress: number = 0
-  @State private onlineSearchPopupProgress: number = 0
-  @State private detailDialogProgress: number = 0
-  @State private apiSettingsDialogProgress: number = 0
-  @State private deleteDialogProgress: number = 0
   @State private isDeletingSong: boolean = false
   @State private lyricApiUrl: string = ''
   @State private lyricApiKey: string = ''
@@ -908,16 +1309,136 @@ struct SurfaceNowPlayingView {
   @State private draftLyricApiKey: string = ''
   @State private draftCoverApiUrl: string = ''
   @State private draftCoverApiKey: string = ''
+  @State private isMoreSheetContentVisible: boolean = true
+  @State private isOnlineSearchContentVisible: boolean = true
   @State private fetchStatus: string = 'idle'
   @State private fetchMessage: string = ''
   @State private pendingOnlineSearchItem: string = ''
   @State private coverLyricPageIndex: number = 0
   private coverLyricSwiperController: SwiperController = new SwiperController()
-  private isComponentReady: boolean = false
   private readonly lrcApiConfigService: LrcApiConfigService = LrcApiConfigService.getInstance()
-  private readonly coverThemeService: CoverThemeService = CoverThemeService.getInstance()
   private readonly playlistManager: PlaylistManager = PlaylistManager.getInstance()
-  private readonly controlsFloatingOffset: number = 36
+  private dialogBackStack: string[] = []
+  private readonly dialogParentMore: string = 'more'
+  private readonly dialogParentOnlineSearch: string = 'onlineSearch'
+  private readonly handleMoreImmersiveAction: () => void = () => {
+    this.enterImmersiveMode()
+  }
+  private readonly handleMoreDetailAction: () => void = () => {
+    this.openDetailDialog()
+  }
+  private readonly handleMoreOnlineSearchAction: () => void = () => {
+    this.openOnlineSearchPopup()
+  }
+  private readonly handleMoreDeleteAction: () => void = () => {
+    this.openDeleteDialog()
+  }
+  private readonly handleMoreDialogCancel: () => void = () => {
+    this.dismissMoreSheet()
+  }
+  private readonly handleOnlineSearchAction: (itemId: string) => void = (itemId: string) => {
+    this.handleSubMenuAction(itemId)
+  }
+  private readonly handleOnlineSearchCloseAction: () => void = () => {
+    this.closeOnlineSearchPopup()
+  }
+  private readonly handleOnlineSearchDialogCancel: () => void = () => {
+    this.dismissOnlineSearchPopup()
+  }
+  private readonly handleDetailCloseAction: () => void = () => {
+    this.closeDetailDialog()
+  }
+  private readonly handleDetailDialogCancel: () => void = () => {
+    this.dismissDetailDialog()
+  }
+  private readonly handleDeleteCancelAction: () => void = () => {
+    this.closeDeleteDialog()
+  }
+  private readonly handleDeleteSongAction: () => void = () => {
+    void this.confirmDeleteCurrentSong(false)
+  }
+  private readonly handleDeleteFileAction: () => void = () => {
+    void this.confirmDeleteCurrentSong(true)
+  }
+  private readonly handleDeleteDialogCancel: () => void = () => {
+    this.dismissDeleteDialog()
+  }
+  private readonly handleApiSettingsCancelAction: () => void = () => {
+    this.closeApiSettingsDialog(false)
+  }
+  private readonly handleApiSettingsConfirmAction: () => void = () => {
+    this.closeApiSettingsDialog(true)
+  }
+  private readonly handleApiSettingsDialogCancel: () => void = () => {
+    this.dismissApiSettingsDialog(false)
+  }
+  private moreMenuDialogController: CustomDialogController = new CustomDialogController({
+    builder: MoreMenuDialog({
+      visible: $isMoreSheetContentVisible,
+      onImmersive: this.handleMoreImmersiveAction,
+      onDetail: this.handleMoreDetailAction,
+      onOnlineSearch: this.handleMoreOnlineSearchAction,
+      onDelete: this.handleMoreDeleteAction
+    }),
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    autoCancel: true,
+    maskColor: 'rgba(0, 0, 0, 0.2)',
+    cancel: this.handleMoreDialogCancel
+  })
+  private onlineSearchDialogController: CustomDialogController = new CustomDialogController({
+    builder: OnlineSearchDialog({
+      visible: $isOnlineSearchContentVisible,
+      activeItem: $activeOnlineSearchItem,
+      fetchStatus: $fetchStatus,
+      fetchMessage: $fetchMessage,
+      onAction: this.handleOnlineSearchAction,
+      onClose: this.handleOnlineSearchCloseAction
+    }),
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    autoCancel: true,
+    maskColor: 'rgba(0, 0, 0, 0)',
+    cancel: this.handleOnlineSearchDialogCancel
+  })
+  private detailDialogController: CustomDialogController = new CustomDialogController({
+    builder: DetailDialog({
+      onClose: this.handleDetailCloseAction
+    }),
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    autoCancel: true,
+    maskColor: 'rgba(0, 0, 0, 0)',
+    cancel: this.handleDetailDialogCancel
+  })
+  private deleteDialogController: CustomDialogController = new CustomDialogController({
+    builder: DeleteSongDialog({
+      isDeletingSong: $isDeletingSong,
+      onCancel: this.handleDeleteCancelAction,
+      onDeleteSong: this.handleDeleteSongAction,
+      onDeleteFile: this.handleDeleteFileAction
+    }),
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    autoCancel: true,
+    maskColor: 'rgba(0, 0, 0, 0)',
+    cancel: this.handleDeleteDialogCancel
+  })
+  private apiSettingsDialogController: CustomDialogController = new CustomDialogController({
+    builder: ApiSettingsDialog({
+      lyricApiUrl: $draftLyricApiUrl,
+      lyricApiKey: $draftLyricApiKey,
+      coverApiUrl: $draftCoverApiUrl,
+      coverApiKey: $draftCoverApiKey,
+      onCancel: this.handleApiSettingsCancelAction,
+      onConfirm: this.handleApiSettingsConfirmAction
+    }),
+    customStyle: true,
+    alignment: DialogAlignment.Center,
+    autoCancel: true,
+    maskColor: 'rgba(0, 0, 0, 0)',
+    cancel: this.handleApiSettingsDialogCancel
+  })
   private readonly overlayCoverPageMaxSize: number = 520
   private readonly overlayCoverPageMinSize: number = 180
   private readonly overlayCoverPageWidthRatio: number = 0.845
@@ -930,35 +1451,11 @@ struct SurfaceNowPlayingView {
   private readonly overlayControlsBaseHeight: number = 176
   private readonly overlayProgressControlsGap: number = 15
   private readonly overlayHeaderTopOffset: number = 8
-  private readonly overlayTitleLineHeight: number = 32
-  private readonly overlayArtistLineHeight: number = 20
-  private readonly overlayTextGap: number = 4
-  private readonly overlayTitleFont: number = 24
-  private readonly overlayArtistFont: number = 13
-  private readonly progressTimeLabelWidth: number = 38
-  private readonly progressInlineGap: number = 10
   private readonly coverPageIndex: number = 0
   private readonly lyricsPageIndex: number = 1
-  private readonly moreSheetAnimationDuration: number = 300
-  private readonly onlineSearchAnimationDuration: number = 250
-  private readonly detailDialogAnimationDuration: number = 220
-  private readonly apiSettingsDialogAnimationDuration: number = 220
-  private readonly deleteDialogAnimationDuration: number = 220
   private readonly immersiveModeAnimationDuration: number = 260
-  @State private sheetDragOffsetY: number = 0
-  private sheetStartY: number = 0
-  private moreSheetHideTask: number = -1
-  private onlineSearchPopupHideTask: number = -1
-  private detailDialogHideTask: number = -1
-  private apiSettingsDialogHideTask: number = -1
-  private deleteDialogHideTask: number = -1
   private immersiveModeHideTask: number = -1
-  private coverThemeTaskToken: number = 0
   private apiSettingsLoaded: boolean = false
-  private lastExternalMoreSheetRequest: number = 0
-  private externalMoreSheetTask: number = -1
-  private lastExternalDismissRequest: number = 0
-  private externalDismissTask: number = -1
 
   aboutToAppear(): void {
     this.setSharedMorphHidden(false)
@@ -966,18 +1463,21 @@ struct SurfaceNowPlayingView {
     this.setImmersiveModeState(false, 0)
     this.coverLyricPageIndex = this.coverPageIndex
     this.emitLyricsProgress(0)
-    this.updateProgressPercent()
-    this.syncCover()
-    if (!this.contentOnly && !this.apiSettingsLoaded) {
-      void this.loadApiSettings()
-    }
-    this.isComponentReady = true
   }
 
   aboutToDisappear(): void {
-    this.clearExternalMoreSheetTask()
-    this.clearExternalDismissTask()
     this.clearImmersiveModeHideTask()
+    this.closeDialogControllers()
+    this.isMoreSheetVisible = false
+    this.isOnlineSearchPopupVisible = false
+    this.isDetailDialogVisible = false
+    this.isApiSettingsDialogVisible = false
+    this.isDeleteDialogVisible = false
+    this.isMoreSheetContentVisible = true
+    this.isOnlineSearchContentVisible = true
+    this.clearDialogParents()
+    this.setSharedMorphHidden(false)
+    this.setModalOverlayActive(false)
     this.setImmersiveModeState(false, 0)
   }
 
@@ -1007,565 +1507,6 @@ struct SurfaceNowPlayingView {
     }
   }
 
-  private syncCover(): void {
-    const pixelMap = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
-    this.coverPixelMap = pixelMap ? pixelMap as image.PixelMap : null
-  }
-
-  private async updateCoverPageTheme(pixelMap: image.PixelMap | null, taskToken: number): Promise<void> {
-    const cacheKey: string = this.getCoverThemeCacheKey()
-    const cachedTheme = await this.coverThemeService.loadCachedTheme(cacheKey)
-    if (taskToken !== this.coverThemeTaskToken) {
-      return
-    }
-
-    if (cachedTheme) {
-      this.applyCoverPageTheme(cachedTheme as CoverPageTheme)
-    }
-  }
-
-  private getCoverThemeCacheKey(): string {
-    const song = this.getCurrentSong()
-    if (song) {
-      if (song.coverUri.length > 0) {
-        return `cover:${song.coverUri}`
-      }
-      if (song.id.length > 0) {
-        return `song:${song.id}`
-      }
-      if (song.uri.length > 0) {
-        return `uri:${song.uri}`
-      }
-    }
-    return `version:${this.coverVersion}`
-  }
-
-  private applyCoverPageTheme(theme: CoverPageTheme): void {
-    this.coverBackdropBaseColor = theme.baseColor
-    this.coverBackdropTopColor = theme.topColor
-    this.coverBackdropMiddleColor = theme.middleColor
-    this.coverBackdropBottomColor = theme.bottomColor
-    this.coverBackdropVeilColor = theme.veilColor
-    this.coverBackdropGlowColor = theme.glowColor
-    this.coverBackdropAccentGlowColor = theme.glowAccentColor
-    this.coverPagePrimaryColor = theme.primaryColor
-    this.coverPageSecondaryColor = theme.secondaryColor
-    this.coverPageTertiaryColor = theme.tertiaryColor
-    this.coverPageProgressTrackColor = theme.progressTrackColor
-    this.coverPageShadowColor = theme.shadowColor
-    AppStorage.setOrCreate(StorageKeys.COVER_THEME_PRIMARY_COLOR, theme.primaryColor)
-    AppStorage.setOrCreate(StorageKeys.COVER_THEME_SECONDARY_COLOR, theme.secondaryColor)
-    AppStorage.setOrCreate('coverBackdropBaseColor', theme.baseColor)
-    AppStorage.setOrCreate('coverBackdropTopColor', theme.topColor)
-    AppStorage.setOrCreate('coverBackdropMiddleColor', theme.middleColor)
-    AppStorage.setOrCreate('coverBackdropBottomColor', theme.bottomColor)
-    AppStorage.setOrCreate('coverBackdropVeilColor', theme.veilColor)
-    AppStorage.setOrCreate('coverBackdropGlowColor', theme.glowColor)
-    AppStorage.setOrCreate('coverBackdropAccentGlowColor', theme.glowAccentColor)
-    AppStorage.setOrCreate('coverThemeShadowColor', theme.shadowColor)
-    AppStorage.setOrCreate('coverThemeAccentColor', theme.glowAccentColor)
-  }
-
-  private getFallbackCoverPageTheme(): CoverPageTheme {
-    if (this.isDarkMode) {
-      return {
-        baseColor: '#080A0F',
-        topColor: 'rgba(123, 127, 255, 0.85)',
-        middleColor: 'rgba(88, 96, 156, 0.92)',
-        bottomColor: 'rgba(58, 68, 110, 0.95)',
-        veilColor: 'rgba(0, 0, 0, 0.06)',
-        glowColor: 'rgba(123, 127, 255, 1)',
-        glowAccentColor: 'rgba(88, 96, 156, 1)',
-        primaryColor: '#FFFFFF',
-        secondaryColor: 'rgba(255, 255, 255, 0.74)',
-        tertiaryColor: 'rgba(255, 255, 255, 0.52)',
-        progressTrackColor: 'rgba(255, 255, 255, 0.24)',
-        shadowColor: 'rgba(0, 0, 0, 0.34)'
-      }
-    }
-
-    return {
-      baseColor: '#F8FAFB',
-      topColor: '#E8F1F2',
-      middleColor: '#EDF2F0',
-      bottomColor: '#D8E2E3',
-      veilColor: 'rgba(255, 255, 255, 0.02)',
-      glowColor: 'rgba(220, 238, 240, 1)',
-      glowAccentColor: 'rgba(238, 228, 214, 1)',
-      primaryColor: '#202020',
-      secondaryColor: 'rgba(32, 32, 32, 0.68)',
-      tertiaryColor: 'rgba(32, 32, 32, 0.46)',
-      progressTrackColor: 'rgba(32, 32, 32, 0.18)',
-      shadowColor: 'rgba(0, 0, 0, 0.16)'
-    }
-  }
-
-  private async createThemePixelMap(pixelMap: image.PixelMap): Promise<image.PixelMap> {
-    const imageInfo = await pixelMap.getImageInfo()
-    const width: number = Math.max(1, imageInfo.size.width)
-    const height: number = Math.max(1, imageInfo.size.height)
-    const maxSide: number = Math.max(width, height)
-    const sampleSize: number = 96
-
-    if (maxSide <= sampleSize) {
-      return pixelMap
-    }
-
-    const scale: number = sampleSize / maxSide
-    return await pixelMap.createScaledPixelMap(scale, scale)
-  }
-
-  private async getEdgeAverageColor(pixelMap: image.PixelMap): Promise<CoverThemeRgb> {
-    const imageInfo = await pixelMap.getImageInfo()
-    const width: number = Math.max(1, imageInfo.size.width)
-    const height: number = Math.max(1, imageInfo.size.height)
-    const buffer = new ArrayBuffer(width * height * 4)
-    await pixelMap.readPixelsToBuffer(buffer)
-
-    const data = new Uint8Array(buffer)
-    const edgeSize: number = Math.max(1, Math.floor(Math.min(width, height) * 0.12))
-    let redTotal: number = 0
-    let greenTotal: number = 0
-    let blueTotal: number = 0
-    let count: number = 0
-
-    for (let y = 0; y < height; y += 2) {
-      for (let x = 0; x < width; x += 2) {
-        const isEdge: boolean = x < edgeSize || x >= width - edgeSize || y < edgeSize || y >= height - edgeSize
-        if (!isEdge) {
-          continue
-        }
-
-        const index: number = (y * width + x) * 4
-        if (index + 2 >= data.length) {
-          continue
-        }
-
-        redTotal += data[index]
-        greenTotal += data[index + 1]
-        blueTotal += data[index + 2]
-        count += 1
-      }
-    }
-
-    if (count === 0) {
-      return { red: 238, green: 238, blue: 238 }
-    }
-
-    return {
-      red: Math.round(redTotal / count),
-      green: Math.round(greenTotal / count),
-      blue: Math.round(blueTotal / count)
-    }
-  }
-
-  private buildCoverPageTheme(
-    mainColor: CoverThemeRgb,
-    averageColor: CoverThemeRgb,
-    edgeColor: CoverThemeRgb,
-    saturationColor: CoverThemeRgb
-  ): CoverPageTheme {
-    const rawSeedColor = this.selectSafeSeedColor(mainColor, averageColor, edgeColor, saturationColor)
-    const seedColor = this.normalizeSeedColor(rawSeedColor, edgeColor)
-    const mixedColor = this.mixColor(seedColor, edgeColor, 0.42)
-    const seedLuminance: number = this.getLuminance(seedColor)
-    const isDarkTheme: boolean = seedLuminance < 115
-
-    const bgTop = isDarkTheme
-      ? this.toDarkBackground(seedColor, 0.22, 0.82)
-      : this.ensureColorfulEnough(this.toPastelBackground(seedColor, 0.16, 1), seedColor)
-    const bgMiddle = isDarkTheme
-      ? this.toDarkBackground(edgeColor, 0.28, 0.76)
-      : this.ensureColorfulEnough(this.toPastelBackground(edgeColor, 0.10, 1), edgeColor)
-    const bgBottom = isDarkTheme
-      ? this.toDarkBackground(mixedColor, 0.34, 0.72)
-      : this.ensureColorfulEnough(this.toPastelBackground(mixedColor, 0.20, 0.92), seedColor)
-    const isLightBackground: boolean = this.getLuminance(bgMiddle) > 150
-    const glowSeed = this.toGlowColor(seedColor, isLightBackground)
-    const glowAccent = this.toGlowColor(edgeColor, isLightBackground)
-
-    const theme: CoverPageTheme = {
-      baseColor: isLightBackground ? '#F8FAFB' : '#080A0F',
-      topColor: this.toRgba(bgTop, 1),
-      middleColor: this.toRgba(bgMiddle, 1),
-      bottomColor: this.toRgba(bgBottom, 1),
-      veilColor: isLightBackground ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.06)',
-      glowColor: this.toRgba(glowSeed, 1),
-      glowAccentColor: this.toRgba(glowAccent, 1),
-      primaryColor: isLightBackground ? '#202020' : '#FFFFFF',
-      secondaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.68)' : 'rgba(255, 255, 255, 0.74)',
-      tertiaryColor: isLightBackground ? 'rgba(32, 32, 32, 0.46)' : 'rgba(255, 255, 255, 0.52)',
-      progressTrackColor: isLightBackground ? 'rgba(32, 32, 32, 0.18)' : 'rgba(255, 255, 255, 0.24)',
-      shadowColor: isLightBackground ? this.toRgba(seedColor, 0.20) : 'rgba(0, 0, 0, 0.34)'
-    }
-
-    return theme
-  }
-
-  private selectSafeSeedColor(
-    mainColor: CoverThemeRgb,
-    averageColor: CoverThemeRgb,
-    edgeColor: CoverThemeRgb,
-    saturationColor: CoverThemeRgb
-  ): CoverThemeRgb {
-    const candidates: CoverThemeRgb[] = [
-      edgeColor,
-      mainColor,
-      averageColor,
-      this.mixColor(mainColor, edgeColor, 0.35),
-      this.mixColor(averageColor, edgeColor, 0.45)
-    ]
-
-    if (this.isUsableAccentColor(saturationColor)) {
-      candidates.push(saturationColor)
-      candidates.push(this.mixColor(saturationColor, edgeColor, 0.35))
-    }
-
-    let bestColor: CoverThemeRgb = candidates[0]
-    let bestScore: number = -999999
-
-    for (let i = 0; i < candidates.length; i += 1) {
-      const item = candidates[i]
-      const score = this.scoreColorForUi(item, edgeColor)
-      if (score > bestScore) {
-        bestColor = item
-        bestScore = score
-      }
-    }
-
-    return bestColor
-  }
-
-  private isUsableAccentColor(color: CoverThemeRgb): boolean {
-    const luminance: number = this.getLuminance(color)
-    const colorfulness: number = this.getColorfulness(color)
-
-    if (luminance < 70 || luminance > 235) {
-      return false
-    }
-
-    if (colorfulness < 18 || colorfulness > 170) {
-      return false
-    }
-
-    const isDirtyOlive: boolean = color.red < 130 && color.green < 155 && color.blue < 90 &&
-      color.green >= color.blue && color.red >= color.blue
-    return !isDirtyOlive
-  }
-
-  private scoreColorForUi(color: CoverThemeRgb, edgeColor: CoverThemeRgb): number {
-    const luminance: number = this.getLuminance(color)
-    const colorfulness: number = this.getColorfulness(color)
-    const edgeDistance: number = this.colorDistance(color, edgeColor)
-    let score: number = 100
-
-    if (luminance < 45) {
-      score -= 40
-    }
-    if (luminance > 238) {
-      score -= 30
-    }
-    if (colorfulness < 10) {
-      score -= 25
-    }
-    if (colorfulness > 150) {
-      score -= 35
-    }
-    if (this.isSkinLikeColor(color) && edgeDistance > 35) {
-      score -= 45
-    }
-
-    score += Math.max(0, 40 - edgeDistance * 0.4)
-    return score
-  }
-
-  private normalizeSeedColor(seedColor: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
-    let color = seedColor
-    color = this.fixSkinToneCast(color, edgeColor)
-    color = this.fixOverSaturatedColor(color)
-    color = this.fixTooDarkColor(color)
-    color = this.fixTooLightNeutralColor(color, edgeColor)
-    return color
-  }
-
-  private fixSkinToneCast(color: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
-    if (!this.isSkinLikeColor(color)) {
-      return color
-    }
-
-    const edgeLooksPinkOrCool: boolean = edgeColor.red >= edgeColor.green && edgeColor.blue >= edgeColor.green - 12
-    if (!edgeLooksPinkOrCool) {
-      return this.toSoftWarmColor(color)
-    }
-
-    return {
-      red: this.clampColor(color.red - 8),
-      green: this.clampColor(color.green + 12),
-      blue: this.clampColor(color.blue + 38)
-    }
-  }
-
-  private toSoftWarmColor(color: CoverThemeRgb): CoverThemeRgb {
-    return {
-      red: this.clampColor(color.red),
-      green: this.clampColor(color.green + 8),
-      blue: this.clampColor(color.blue + 18)
-    }
-  }
-
-  private fixOverSaturatedColor(color: CoverThemeRgb): CoverThemeRgb {
-    const saturationLike: number = this.getColorfulness(color)
-    if (saturationLike < 90) {
-      return color
-    }
-
-    const gray: number = this.getLuminance(color)
-    return {
-      red: this.clampColor(gray + (color.red - gray) * 0.55),
-      green: this.clampColor(gray + (color.green - gray) * 0.55),
-      blue: this.clampColor(gray + (color.blue - gray) * 0.55)
-    }
-  }
-
-  private fixTooDarkColor(color: CoverThemeRgb): CoverThemeRgb {
-    if (this.getLuminance(color) >= 80) {
-      return color
-    }
-
-    return {
-      red: this.clampColor(color.red + 55),
-      green: this.clampColor(color.green + 55),
-      blue: this.clampColor(color.blue + 55)
-    }
-  }
-
-  private fixTooLightNeutralColor(color: CoverThemeRgb, edgeColor: CoverThemeRgb): CoverThemeRgb {
-    const isNeutral: boolean = this.getColorfulness(color) < 16
-    if (!isNeutral) {
-      return color
-    }
-
-    if (this.getColorfulness(edgeColor) > 20) {
-      return this.mixColor(color, edgeColor, 0.45)
-    }
-
-    if (this.getLuminance(color) > 180) {
-      return { red: 226, green: 236, blue: 240 }
-    }
-
-    return { red: 72, green: 84, blue: 92 }
-  }
-
-  private toPastelBackground(
-    color: CoverThemeRgb,
-    whiteRatio: number,
-    saturationRatio: number
-  ): CoverThemeRgb {
-    const gray: number = this.getLuminance(color)
-    const preserved: CoverThemeRgb = {
-      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
-      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
-      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
-    }
-
-    return this.mixColor(preserved, { red: 255, green: 255, blue: 255 }, whiteRatio)
-  }
-
-  private toGlowColor(color: CoverThemeRgb, isLightBackground: boolean): CoverThemeRgb {
-    const gray: number = this.getLuminance(color)
-    const saturationRatio: number = isLightBackground ? 0.88 : 0.72
-    const preserved: CoverThemeRgb = {
-      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
-      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
-      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
-    }
-
-    if (isLightBackground) {
-      return this.mixColor(preserved, { red: 255, green: 255, blue: 255 }, 0.08)
-    }
-
-    return this.mixColor(preserved, { red: 32, green: 36, blue: 44 }, 0.18)
-  }
-
-  private toDarkBackground(
-    color: CoverThemeRgb,
-    darkRatio: number,
-    saturationRatio: number
-  ): CoverThemeRgb {
-    const gray: number = this.getLuminance(color)
-    const preserved: CoverThemeRgb = {
-      red: this.clampColor(gray + (color.red - gray) * saturationRatio),
-      green: this.clampColor(gray + (color.green - gray) * saturationRatio),
-      blue: this.clampColor(gray + (color.blue - gray) * saturationRatio)
-    }
-
-    return this.mixColor(preserved, { red: 24, green: 28, blue: 34 }, darkRatio)
-  }
-
-  private ensureColorfulEnough(color: CoverThemeRgb, seedColor: CoverThemeRgb): CoverThemeRgb {
-    const minColorfulness: number = 24
-
-    if (this.getColorfulness(color) >= minColorfulness) {
-      return color
-    }
-
-    const boostedColor = this.mixColor(color, seedColor, 0.46)
-    if (this.getColorfulness(boostedColor) >= minColorfulness) {
-      return boostedColor
-    }
-
-    return this.mixColor(color, seedColor, 0.68)
-  }
-
-  private mixColor(a: CoverThemeRgb, b: CoverThemeRgb, ratio: number): CoverThemeRgb {
-    const safeRatio: number = Math.max(0, Math.min(1, ratio))
-    return {
-      red: this.clampColor(a.red * (1 - safeRatio) + b.red * safeRatio),
-      green: this.clampColor(a.green * (1 - safeRatio) + b.green * safeRatio),
-      blue: this.clampColor(a.blue * (1 - safeRatio) + b.blue * safeRatio)
-    }
-  }
-
-  private getColorfulness(color: CoverThemeRgb): number {
-    return Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue)
-  }
-
-  private isSkinLikeColor(color: CoverThemeRgb): boolean {
-    const red: number = color.red
-    const green: number = color.green
-    const blue: number = color.blue
-    return red > 190 && green > 115 && blue > 75 && red > green && green > blue && red - blue > 45 &&
-      green - blue > 18
-  }
-
-  private colorDistance(a: CoverThemeRgb, b: CoverThemeRgb): number {
-    const redDiff: number = a.red - b.red
-    const greenDiff: number = a.green - b.green
-    const blueDiff: number = a.blue - b.blue
-    return Math.sqrt(redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff)
-  }
-
-  private isUsableThemeColor(color: CoverThemeRgb | null | undefined): boolean {
-    return !!color &&
-      Number.isFinite(color.red) &&
-      Number.isFinite(color.green) &&
-      Number.isFinite(color.blue)
-  }
-
-  private getLuminance(color: CoverThemeRgb): number {
-    return 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
-  }
-
-  private toRgba(color: CoverThemeRgb, alpha: number): string {
-    const normalizedAlpha: number = Math.max(0, Math.min(1, alpha))
-    return `rgba(${this.clampColor(color.red)}, ${this.clampColor(color.green)}, ${this.clampColor(color.blue)}, ${normalizedAlpha})`
-  }
-
-  private colorToText(color: CoverThemeRgb): string {
-    return `rgb(${this.clampColor(color.red)}, ${this.clampColor(color.green)}, ${this.clampColor(color.blue)})`
-  }
-
-  private hexToRgb(color: string): CoverThemeRgb {
-    let hex: string = color.replace('#', '').trim()
-    if (hex.length === 3) {
-      hex = hex.split('').map((item: string) => `${item}${item}`).join('')
-    }
-    if (hex.length !== 6) {
-      return { red: 123, green: 127, blue: 255 }
-    }
-
-    return {
-      red: Number.parseInt(hex.substring(0, 2), 16),
-      green: Number.parseInt(hex.substring(2, 4), 16),
-      blue: Number.parseInt(hex.substring(4, 6), 16)
-    }
-  }
-
-  private clampColor(value: number): number {
-    return Math.max(0, Math.min(255, Math.round(value)))
-  }
-
-  private onPositionChange(): void {
-    this.updateProgressPercent()
-  }
-
-  private onDurationChange(): void {
-    this.updateProgressPercent()
-  }
-
-  private updateProgressPercent(): void {
-    if (this.isSeeking) {
-      return
-    }
-    this.progressPercent = this.totalDuration <= 0 ? 0 : (this.currentPosition / this.totalDuration) * 100
-  }
-
-  private closePage(): void {
-    this.setImmersiveModeState(false, 0)
-    this.closeMoreSheet()
-    if (this.onClose) {
-      this.onClose()
-    }
-  }
-
-  private toggleMoreSheet(): void {
-    if (this.isMoreSheetVisible) {
-      this.closeMoreSheet()
-      return
-    }
-
-    this.openMoreSheet()
-  }
-
-  private clearExternalMoreSheetTask(): void {
-    if (this.externalMoreSheetTask >= 0) {
-      clearTimeout(this.externalMoreSheetTask)
-      this.externalMoreSheetTask = -1
-    }
-  }
-
-  private clearExternalDismissTask(): void {
-    if (this.externalDismissTask >= 0) {
-      clearTimeout(this.externalDismissTask)
-      this.externalDismissTask = -1
-    }
-  }
-
-  private clearMoreSheetHideTask(): void {
-    if (this.moreSheetHideTask >= 0) {
-      clearTimeout(this.moreSheetHideTask)
-      this.moreSheetHideTask = -1
-    }
-  }
-
-  private clearOnlineSearchPopupHideTask(): void {
-    if (this.onlineSearchPopupHideTask >= 0) {
-      clearTimeout(this.onlineSearchPopupHideTask)
-      this.onlineSearchPopupHideTask = -1
-    }
-  }
-
-  private clearDetailDialogHideTask(): void {
-    if (this.detailDialogHideTask >= 0) {
-      clearTimeout(this.detailDialogHideTask)
-      this.detailDialogHideTask = -1
-    }
-  }
-
-  private clearApiSettingsDialogHideTask(): void {
-    if (this.apiSettingsDialogHideTask >= 0) {
-      clearTimeout(this.apiSettingsDialogHideTask)
-      this.apiSettingsDialogHideTask = -1
-    }
-  }
-
-  private clearDeleteDialogHideTask(): void {
-    if (this.deleteDialogHideTask >= 0) {
-      clearTimeout(this.deleteDialogHideTask)
-      this.deleteDialogHideTask = -1
-    }
-  }
-
   private clearImmersiveModeHideTask(): void {
     if (this.immersiveModeHideTask >= 0) {
       clearTimeout(this.immersiveModeHideTask)
@@ -1573,59 +1514,165 @@ struct SurfaceNowPlayingView {
     }
   }
 
+  private closeDialogControllers(): void {
+    this.moreMenuDialogController.close()
+    this.onlineSearchDialogController.close()
+    this.detailDialogController.close()
+    this.deleteDialogController.close()
+    this.apiSettingsDialogController.close()
+  }
+
+  private clearDialogParents(): void {
+    this.dialogBackStack = []
+  }
+
+  private pushDialogParent(parent: string): void {
+    if (parent.length > 0) {
+      this.dialogBackStack.push(parent)
+    }
+  }
+
+  private popDialogParent(): string {
+    if (this.dialogBackStack.length === 0) {
+      return ''
+    }
+
+    const parent: string = this.dialogBackStack[this.dialogBackStack.length - 1]
+    this.dialogBackStack.splice(this.dialogBackStack.length - 1, 1)
+    return parent
+  }
+
+  private hideMoreSheetForOnlineSearch(): void {
+    if (!this.isMoreSheetVisible || !this.isMoreSheetContentVisible) {
+      return
+    }
+
+    this.isMoreSheetContentVisible = false
+    this.pushDialogParent(this.dialogParentMore)
+  }
+
+  private hideMoreSheetForChild(): void {
+    if (!this.isMoreSheetVisible || !this.isMoreSheetContentVisible) {
+      return
+    }
+
+    this.isMoreSheetContentVisible = false
+    this.pushDialogParent(this.dialogParentMore)
+  }
+
+  private hideOnlineSearchForChild(): boolean {
+    if (!this.isOnlineSearchPopupVisible || !this.isOnlineSearchContentVisible) {
+      return false
+    }
+
+    this.isOnlineSearchContentVisible = false
+    this.pushDialogParent(this.dialogParentOnlineSearch)
+    return true
+  }
+
+  private restorePreviousDialog(): boolean {
+    const parent: string = this.popDialogParent()
+    if (parent === this.dialogParentOnlineSearch && this.isOnlineSearchPopupVisible) {
+      this.isOnlineSearchContentVisible = true
+      this.setModalOverlayActive(true)
+      return true
+    }
+
+    if (parent === this.dialogParentMore && this.isMoreSheetVisible) {
+      this.isMoreSheetContentVisible = true
+      this.setModalOverlayActive(true)
+      return true
+    }
+
+    return false
+  }
+
+  private dismissMoreSheet(): void {
+    this.isMoreSheetVisible = false
+    this.isMoreSheetContentVisible = true
+    this.clearDialogParents()
+    this.restoreModalOverlayWhenIdle()
+  }
+
+  private dismissOnlineSearchPopup(): void {
+    this.isOnlineSearchPopupVisible = false
+    this.isOnlineSearchContentVisible = true
+    this.activeOnlineSearchItem = ''
+    if (!this.restorePreviousDialog()) {
+      this.restoreModalOverlayWhenIdle()
+    }
+  }
+
+  private dismissDetailDialog(): void {
+    this.isDetailDialogVisible = false
+    if (!this.restorePreviousDialog()) {
+      this.restoreModalOverlayWhenIdle()
+    }
+  }
+
+  private dismissDeleteDialog(): void {
+    this.isDeleteDialogVisible = false
+    this.isDeletingSong = false
+    if (!this.restorePreviousDialog()) {
+      this.restoreModalOverlayWhenIdle()
+    }
+  }
+
+  private dismissApiSettingsDialog(commit: boolean): void {
+    this.isApiSettingsDialogVisible = false
+    const restoredParent: boolean = this.restorePreviousDialog()
+    if (commit) {
+      this.retryPendingOnlineSearch()
+    } else {
+      this.pendingOnlineSearchItem = ''
+    }
+    if (!restoredParent) {
+      this.restoreModalOverlayWhenIdle()
+    }
+  }
+
   private openMoreSheet(): void {
-    this.clearMoreSheetHideTask()
-    this.clearOnlineSearchPopupHideTask()
-    this.clearDetailDialogHideTask()
-    this.clearApiSettingsDialogHideTask()
-    this.clearDeleteDialogHideTask()
+    this.closeDialogControllers()
+    this.clearDialogParents()
     this.setModalOverlayActive(true)
     if (!this.apiSettingsLoaded) {
       void this.loadApiSettings()
     }
+    this.isOnlineSearchPopupVisible = false
+    this.isDetailDialogVisible = false
+    this.isApiSettingsDialogVisible = false
+    this.isDeleteDialogVisible = false
+    this.isMoreSheetContentVisible = true
+    this.isOnlineSearchContentVisible = true
     this.isMoreSheetVisible = true
-    this.moreSheetProgress = 0
-    this.sheetDragOffsetY = 0
-    animateTo({
-      duration: this.moreSheetAnimationDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.moreSheetProgress = 1
-    })
+    this.moreMenuDialogController.open()
+  }
+
+  private openPlaylistDialog(): void {
+    try {
+      promptAction.showToast({ message: 'Playlist dialog is not implemented yet', duration: 1200 })
+    } catch (_) {
+    }
   }
 
   private closeMoreSheet(): void {
-    if (!this.isMoreSheetVisible) {
+    if (!this.hasLocalOverlayVisible()) {
       return
     }
 
-    this.clearMoreSheetHideTask()
-    this.clearOnlineSearchPopupHideTask()
-    this.clearDetailDialogHideTask()
-    this.clearApiSettingsDialogHideTask()
-    this.clearDeleteDialogHideTask()
-    animateTo({
-      duration: this.moreSheetAnimationDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.moreSheetProgress = 0
-      this.onlineSearchPopupProgress = 0
-      this.detailDialogProgress = 0
-      this.apiSettingsDialogProgress = 0
-      this.deleteDialogProgress = 0
-    })
-    this.moreSheetHideTask = setTimeout(() => {
-      this.isMoreSheetVisible = false
-      this.isOnlineSearchPopupVisible = false
-      this.isDetailDialogVisible = false
-      this.setSharedMorphHidden(false)
-      this.setModalOverlayActive(false)
-      this.isApiSettingsDialogVisible = false
-      this.isDeleteDialogVisible = false
-      this.isDeletingSong = false
-      this.activeOnlineSearchItem = ''
-      this.moreSheetHideTask = -1
-    }, this.moreSheetAnimationDuration) as number
+    this.closeDialogControllers()
+    this.isMoreSheetVisible = false
+    this.isOnlineSearchPopupVisible = false
+    this.isDetailDialogVisible = false
+    this.isApiSettingsDialogVisible = false
+    this.isDeleteDialogVisible = false
+    this.isMoreSheetContentVisible = true
+    this.isOnlineSearchContentVisible = true
+    this.clearDialogParents()
+    this.setSharedMorphHidden(false)
+    this.setModalOverlayActive(false)
+    this.isDeletingSong = false
+    this.activeOnlineSearchItem = ''
   }
 
   private getImmersiveProgress(): number {
@@ -1638,25 +1685,6 @@ struct SurfaceNowPlayingView {
 
   private lerp(a: number, b: number, t: number): number {
     return a + (b - a) * t
-  }
-
-  private getImmersiveControlsTranslateY(): number {
-    const progress = this.getImmersiveProgress()
-    if (progress <= 0) {
-      return 0
-    }
-
-    const coverBottom = this.getOverlayCoverTargetTop() + this.getOverlayCoverTargetSize()
-    const bottomLimit = this.getOverlayScreenHeight() - this.bottomSafeHeight
-    if (bottomLimit <= coverBottom) {
-      return 0
-    }
-
-    const desiredCenterY = coverBottom + (bottomLimit - coverBottom) * 0.62
-    const currentControlOffset = this.lerp(52, 45, progress)
-    const currentCenterY = this.getOverlayScreenHeight() - this.bottomSafeHeight -
-      this.controlsFloatingOffset - currentControlOffset
-    return (desiredCenterY - currentCenterY) * progress
   }
 
   private isImmersiveModeShowing(): boolean {
@@ -1707,26 +1735,12 @@ struct SurfaceNowPlayingView {
     }, this.immersiveModeAnimationDuration) as number
   }
 
-  private toggleOnlineSearchPopup(): void {
-    if (this.isOnlineSearchPopupVisible) {
-      this.closeOnlineSearchPopup()
-      return
-    }
-
-    this.openOnlineSearchPopup()
-  }
-
   private openOnlineSearchPopup(): void {
-    this.clearOnlineSearchPopupHideTask()
+    this.hideMoreSheetForOnlineSearch()
     this.setModalOverlayActive(true)
+    this.isOnlineSearchContentVisible = true
     this.isOnlineSearchPopupVisible = true
-    this.onlineSearchPopupProgress = 0
-    animateTo({
-      duration: this.onlineSearchAnimationDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.onlineSearchPopupProgress = 1
-    })
+    this.onlineSearchDialogController.open()
   }
 
   private closeOnlineSearchPopup(): void {
@@ -1734,33 +1748,16 @@ struct SurfaceNowPlayingView {
       return
     }
 
-    this.clearOnlineSearchPopupHideTask()
-    animateTo({
-      duration: this.onlineSearchAnimationDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.onlineSearchPopupProgress = 0
-    })
-    this.onlineSearchPopupHideTask = setTimeout(() => {
-      this.isOnlineSearchPopupVisible = false
-      this.restoreModalOverlayWhenIdle()
-      this.activeOnlineSearchItem = ''
-      this.onlineSearchPopupHideTask = -1
-    }, this.onlineSearchAnimationDuration) as number
+    this.onlineSearchDialogController.close()
+    this.dismissOnlineSearchPopup()
   }
 
   private openDetailDialog(): void {
     this.hideOnlineSearchPopupImmediately()
-    this.clearDetailDialogHideTask()
+    this.hideMoreSheetForChild()
     this.setModalOverlayActive(true)
     this.isDetailDialogVisible = true
-    this.detailDialogProgress = 0
-    animateTo({
-      duration: this.detailDialogAnimationDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.detailDialogProgress = 1
-    })
+    this.detailDialogController.open()
   }
 
   private closeDetailDialog(): void {
@@ -1768,32 +1765,16 @@ struct SurfaceNowPlayingView {
       return
     }
 
-    this.clearDetailDialogHideTask()
-    animateTo({
-      duration: this.detailDialogAnimationDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.detailDialogProgress = 0
-    })
-    this.detailDialogHideTask = setTimeout(() => {
-      this.isDetailDialogVisible = false
-      this.restoreModalOverlayWhenIdle()
-      this.detailDialogHideTask = -1
-    }, this.detailDialogAnimationDuration) as number
+    this.detailDialogController.close()
+    this.dismissDetailDialog()
   }
 
   private openDeleteDialog(): void {
     this.hideOnlineSearchPopupImmediately()
-    this.clearDeleteDialogHideTask()
+    this.hideMoreSheetForChild()
     this.setModalOverlayActive(true)
     this.isDeleteDialogVisible = true
-    this.deleteDialogProgress = 0
-    animateTo({
-      duration: this.deleteDialogAnimationDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.deleteDialogProgress = 1
-    })
+    this.deleteDialogController.open()
   }
 
   private closeDeleteDialog(): void {
@@ -1801,25 +1782,14 @@ struct SurfaceNowPlayingView {
       return
     }
 
-    this.clearDeleteDialogHideTask()
-    animateTo({
-      duration: this.deleteDialogAnimationDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.deleteDialogProgress = 0
-    })
-    this.deleteDialogHideTask = setTimeout(() => {
-      this.isDeleteDialogVisible = false
-      this.restoreModalOverlayWhenIdle()
-      this.isDeletingSong = false
-      this.deleteDialogHideTask = -1
-    }, this.deleteDialogAnimationDuration) as number
+    this.deleteDialogController.close()
+    this.dismissDeleteDialog()
   }
 
   private hideOnlineSearchPopupImmediately(): void {
-    this.clearOnlineSearchPopupHideTask()
+    this.onlineSearchDialogController.close()
     this.isOnlineSearchPopupVisible = false
-    this.onlineSearchPopupProgress = 0
+    this.isOnlineSearchContentVisible = true
     this.activeOnlineSearchItem = ''
   }
 
@@ -1837,8 +1807,9 @@ struct SurfaceNowPlayingView {
   }
 
   private async openApiSettingsDialog(): Promise<void> {
-    this.hideOnlineSearchPopupImmediately()
-    this.clearApiSettingsDialogHideTask()
+    if (!this.hideOnlineSearchForChild()) {
+      this.hideMoreSheetForChild()
+    }
     this.setModalOverlayActive(true)
     if (!this.apiSettingsLoaded) {
       await this.loadApiSettings()
@@ -1854,13 +1825,7 @@ struct SurfaceNowPlayingView {
     this.draftCoverApiUrl = currentSettings.coverApiUrl
     this.draftCoverApiKey = currentSettings.coverApiKey
     this.isApiSettingsDialogVisible = true
-    this.apiSettingsDialogProgress = 0
-    animateTo({
-      duration: this.apiSettingsDialogAnimationDuration,
-      curve: Curve.EaseOut
-    }, () => {
-      this.apiSettingsDialogProgress = 1
-    })
+    this.apiSettingsDialogController.open()
   }
 
   private closeApiSettingsDialog(commit: boolean): void {
@@ -1876,23 +1841,8 @@ struct SurfaceNowPlayingView {
       void this.persistApiSettings()
     }
 
-    this.clearApiSettingsDialogHideTask()
-    animateTo({
-      duration: this.apiSettingsDialogAnimationDuration,
-      curve: Curve.EaseInOut
-    }, () => {
-      this.apiSettingsDialogProgress = 0
-    })
-    this.apiSettingsDialogHideTask = setTimeout(() => {
-      this.isApiSettingsDialogVisible = false
-      this.restoreModalOverlayWhenIdle()
-      if (commit) {
-        this.retryPendingOnlineSearch()
-      } else {
-        this.pendingOnlineSearchItem = ''
-      }
-      this.apiSettingsDialogHideTask = -1
-    }, this.apiSettingsDialogAnimationDuration) as number
+    this.apiSettingsDialogController.close()
+    this.dismissApiSettingsDialog(commit)
   }
 
   private async persistApiSettings(): Promise<void> {
@@ -1912,30 +1862,6 @@ struct SurfaceNowPlayingView {
     const itemId = this.pendingOnlineSearchItem
     this.pendingOnlineSearchItem = ''
     this.handleSubMenuAction(itemId)
-  }
-
-  private getApiSettingsDialogScale(): number {
-    return 0.92 + this.apiSettingsDialogProgress * 0.08
-  }
-
-  private getApiSettingsDialogTranslateY(): number {
-    return (1 - this.apiSettingsDialogProgress) * 18
-  }
-
-  private updateApiDraftField(fieldId: string, value: string): void {
-    if (fieldId === 'lyrics_api') {
-      this.draftLyricApiUrl = value
-      return
-    }
-    if (fieldId === 'lyrics_key') {
-      this.draftLyricApiKey = value
-      return
-    }
-    if (fieldId === 'cover_api') {
-      this.draftCoverApiUrl = value
-      return
-    }
-    this.draftCoverApiKey = value
   }
 
   private withAlpha(color: string, alpha: number): string {
@@ -1969,199 +1895,8 @@ struct SurfaceNowPlayingView {
     return PlayerService.getInstance().getCurrentSong()
   }
 
-  private getAudioFormatLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song) {
-      return 'AUDIO'
-    }
-
-    const codecMimeType = song.codecMimeType.toLowerCase()
-    if (codecMimeType.startsWith('audio/')) {
-      return codecMimeType.substring('audio/'.length).toUpperCase()
-    }
-
-    const mimeType = song.mimeType.toLowerCase()
-    if (mimeType.startsWith('audio/')) {
-      const formatLabel = mimeType.substring('audio/'.length)
-      if (formatLabel === 'mpeg') {
-        return 'MPEG'
-      }
-      return formatLabel.toUpperCase()
-    }
-
-    const fileName: string = song.uri.split('?')[0]
-    const extension: string = fileName.includes('.')
-      ? (fileName.split('.').pop() ?? '')
-      : ''
-
-    switch (extension.toLowerCase()) {
-      case 'mp3':
-        return 'MPEG'
-      case 'm4a':
-        return 'M4A'
-      case 'flac':
-        return 'FLAC'
-      case 'wav':
-        return 'WAV'
-      case 'aac':
-        return 'AAC'
-      case 'ogg':
-        return 'OGG'
-      default:
-        return extension.length > 0 ? extension.toUpperCase() : 'AUDIO'
-    }
-  }
-
-  private getSampleRateLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.sampleRate <= 0) {
-      return ''
-    }
-
-    const kiloHertz = song.sampleRate / 1000
-    const hasFraction = song.sampleRate % 1000 !== 0
-    return `${hasFraction ? kiloHertz.toFixed(1) : kiloHertz.toFixed(0)} kHz`
-  }
-
-  private getBitrateLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.bitrate <= 0) {
-      return ''
-    }
-
-    const kiloBits = song.bitrate / 1000
-    return `${kiloBits.toFixed(0)} kbps`
-  }
-
-  private getAudioTags(): string[] {
-    const tags: string[] = [this.getAudioFormatLabel()]
-    const sampleRateLabel = this.getSampleRateLabel()
-    const bitrateLabel = this.getBitrateLabel()
-
-    if (sampleRateLabel.length > 0) {
-      tags.push(sampleRateLabel)
-    }
-    if (bitrateLabel.length > 0) {
-      tags.push(bitrateLabel)
-    }
-
-    return tags
-  }
-
-  private getSongFileName(): string {
-    const song = this.getCurrentSong()
-    if (!song) {
-      return 'Unknown'
-    }
-
-    const pathWithoutQuery = song.uri.split('?')[0]
-    let fileName = pathWithoutQuery.split('/').pop() || pathWithoutQuery.split('\\').pop() || 'Unknown'
-    try {
-      fileName = decodeURIComponent(fileName)
-    } catch (_) {
-    }
-
-    const managedNameMatch = fileName.match(/^[0-9a-f]{6,8}_+(.+)$/i)
-    if (managedNameMatch && managedNameMatch[1]) {
-      return managedNameMatch[1]
-    }
-    return fileName
-  }
-
-  private getSongFileSizeLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.uri.length === 0) {
-      return 'Unknown'
-    }
-
-    try {
-      const stat = fileIo.statSync(song.uri)
-      return `${(stat.size / 1024 / 1024).toFixed(2)} MB`
-    } catch (_) {
-      return 'Unknown'
-    }
-  }
-
-  private getSongAddedDateLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.uri.length === 0) {
-      return 'Unknown'
-    }
-
-    try {
-      const stat = fileIo.statSync(song.uri)
-      const timestamp = stat.ctime > 0 ? stat.ctime : stat.mtime
-      return this.formatDate(timestamp)
-    } catch (_) {
-      return 'Unknown'
-    }
-  }
-
-  private formatDate(timestamp: number): string {
-    if (timestamp <= 0) {
-      return 'Unknown'
-    }
-
-    const normalizedTimestamp = timestamp < 1000000000000 ? timestamp * 1000 : timestamp
-    const date = new Date(normalizedTimestamp)
-    const month = date.getMonth() + 1
-    const day = date.getDate()
-    const monthText = month < 10 ? `0${month}` : `${month}`
-    const dayText = day < 10 ? `0${day}` : `${day}`
-    return `${date.getFullYear()}.${monthText}.${dayText}`
-  }
-
-  private getDetailDialogMaxHeight(): number {
-    let screenHeight: number = 800
-    if (this.screenHeightVp > 0) {
-      screenHeight = this.screenHeightVp
-    }
-    return Math.max(520, screenHeight - this.topSafeHeight - this.bottomSafeHeight - 88)
-  }
-
-  private getDetailAlbumLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.album.length === 0) {
-      return 'Unknown'
-    }
-    return song.album
-  }
-
-  private getDetailSampleRateLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.sampleRate <= 0) {
-      return 'Unknown'
-    }
-    return `${song.sampleRate}Hz`
-  }
-
-  private getDetailBitrateLabel(): string {
-    const song = this.getCurrentSong()
-    if (!song || song.bitrate <= 0) {
-      return 'Unknown'
-    }
-    return `${Math.round(song.bitrate / 1000)}kbps`
-  }
-
   private getCoverShadowColor(): string {
     return this.coverPageShadowColor
-  }
-
-  private getMenuScrimColor(): string {
-    return this.isDarkMode ? this.withAlpha('#000000', 0.30) : this.withAlpha('#0D1220', 0.14)
-  }
-
-  private getMenuShadowColor(): string {
-    return this.isDarkMode ? this.withAlpha('#000000', 0.28) : this.withAlpha('#6C7899', 0.18)
-  }
-
-  private getBackdropBaseColor(): string {
-    return this.coverBackdropBaseColor
-  }
-
-  private getSheetTranslateY(): number {
-    const slideOffset: number = (1 - this.moreSheetProgress) * 400
-    return slideOffset + this.sheetDragOffsetY
   }
 
   private getOverlayScreenWidth(): number {
@@ -2170,10 +1905,6 @@ struct SurfaceNowPlayingView {
 
   private getOverlayScreenHeight(): number {
     return this.screenHeightVp > 0 ? this.screenHeightVp : 800
-  }
-
-  private getOverlayControlsReserveHeight(): number {
-    return this.overlayControlsBaseHeight + this.bottomSafeHeight + this.controlsFloatingOffset
   }
 
   private getOverlayProgressReserveHeight(): number {
@@ -2238,18 +1969,6 @@ struct SurfaceNowPlayingView {
     return this.topSafeHeight + ((coverTop - topLimit) - 68) / 2
   }
 
-  private getOverlayArtistTop(): number {
-    return this.getOverlayTitleTop() + this.getOverlayArtistOffset()
-  }
-
-  private getOverlayArtistOffset(): number {
-    return this.overlayTitleLineHeight + this.overlayTextGap
-  }
-
-  private getOverlayCoverLeft(): number {
-    return (this.getOverlayScreenWidth() - this.getOverlayCoverSize()) / 2
-  }
-
   private getOverlayTitleWidth(): number {
     return Math.min(this.getOverlayScreenWidth() - 48, this.getOverlayCoverSize() + 28)
   }
@@ -2258,121 +1977,12 @@ struct SurfaceNowPlayingView {
     return (this.getOverlayScreenWidth() - this.getOverlayTitleWidth()) / 2
   }
 
-  private getProgressTouchWidth(): number {
-    const rowWidth = Math.max(1, this.getOverlayScreenWidth() - 48)
-    return Math.max(1, rowWidth - this.progressTimeLabelWidth * 2 - this.progressInlineGap * 2)
-  }
-
-  private getProgressTouchLeft(): number {
-    return 24 + this.progressTimeLabelWidth + this.progressInlineGap
-  }
-
-  private getProgressTouchTop(): number {
-    return this.getProgressSectionTop()
-  }
-
   private getProgressSectionTop(): number {
     return this.getOverlayScreenHeight() - this.getProgressBottomSpacerHeight() - this.overlayProgressHeight
   }
 
   private getProgressBottomSpacerHeight(): number {
     return this.getOverlayProgressReserveHeight()
-  }
-
-  private getCoverInlineBottomHeight(): number {
-    return this.overlayProgressHeight + this.overlayProgressControlsGap + this.overlayControlsBaseHeight +
-      this.bottomSafeHeight + 20
-  }
-
-  private getCoverPageTopSpacerHeight(): number {
-    return Math.max(0, this.getOverlayCoverTop() - (this.topSafeHeight + 2 + 48))
-  }
-
-  private shouldShowProgressHitLayer(): boolean {
-    return this.expandProgress >= 0.96 && !this.isImmersiveModeShowing() && !this.isLyricsPageVisible() && !this.isMoreSheetVisible &&
-      !this.isOnlineSearchPopupVisible && !this.isDetailDialogVisible && !this.isApiSettingsDialogVisible &&
-      !this.isDeleteDialogVisible && this.currentIndex >= 0 && this.currentTitle.length > 0
-  }
-
-  private getPrimaryTouch(event: TouchEvent): TouchObject | null {
-    if (event.touches.length > 0) {
-      return event.touches[0]
-    }
-    if (event.changedTouches.length > 0) {
-      return event.changedTouches[0]
-    }
-    return null
-  }
-
-
-
-
-
-  private getProgressPercentFromTouch(touch: TouchObject): number {
-    const width: number = this.getProgressTouchWidth()
-    return Math.max(0, Math.min(100, (touch.x / width) * 100))
-  }
-
-  private previewProgressSeek(percent: number): void {
-    this.isSeeking = true
-    this.seekValue = percent
-    this.progressPercent = percent
-  }
-
-  private commitProgressSeek(percent: number): void {
-    const targetPercent: number = Math.max(0, Math.min(100, percent))
-    this.seekValue = targetPercent
-    this.progressPercent = targetPercent
-    if (this.totalDuration > 0) {
-      const targetMs: number = (targetPercent / 100) * this.totalDuration
-      void PlayerService.getInstance().seekTo(targetMs)
-    }
-    this.isSeeking = false
-  }
-
-  private handleProgressTouch(event: TouchEvent): void {
-    event.stopPropagation()
-    if (this.totalDuration <= 0) {
-      return
-    }
-
-    const touch: TouchObject | null = this.getPrimaryTouch(event)
-    if (!touch) {
-      return
-    }
-
-    const percent: number = this.getProgressPercentFromTouch(touch)
-    if (event.type === TouchType.Up) {
-      this.commitProgressSeek(percent)
-    } else if (event.type === TouchType.Cancel) {
-      this.isSeeking = false
-    } else {
-      this.previewProgressSeek(percent)
-    }
-  }
-
-  private getDialogScale(): number {
-    return 0.88 + this.onlineSearchPopupProgress * 0.12
-  }
-
-  private getDetailDialogScale(): number {
-    return 0.92 + this.detailDialogProgress * 0.08
-  }
-
-  private getDetailDialogTranslateY(): number {
-    return (1 - this.detailDialogProgress) * 16
-  }
-
-  private getDeleteDialogScale(): number {
-    return 0.92 + this.deleteDialogProgress * 0.08
-  }
-
-  private getDeleteDialogTranslateY(): number {
-    return (1 - this.deleteDialogProgress) * 16
-  }
-
-  private getApiSettingsDialogInset(): number {
-    return Math.max(this.topSafeHeight, this.bottomSafeHeight) + 16
   }
 
   private isLyricsPageVisible(): boolean {
@@ -2396,258 +2006,6 @@ struct SurfaceNowPlayingView {
       return
     }
     this.onSwipeEnd(velocityY)
-  }
-
-  @Builder
-  private ApiTextField(label: string, placeholder: string, value: string, fieldId: string) {
-    Column({ space: label.length > 0 ? 10 : 0 }) {
-      if (label.length > 0) {
-        Text(label)
-          .width('100%')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.now_playing_primary_icon'))
-      }
-
-      TextInput({ text: value, placeholder })
-        .width('100%')
-        .height(52)
-        .padding({ left: 16, right: 16 })
-        .fontSize(15)
-        .fontColor($r('app.color.now_playing_primary_icon'))
-        .placeholderColor($r('app.color.now_playing_secondary_icon'))
-        .backgroundColor($r('app.color.online_search_api_input_bg'))
-        .borderRadius(16)
-        .onChange((inputValue: string) => {
-          this.updateApiDraftField(fieldId, inputValue)
-        })
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  private ApiFieldSection(title: string, apiValue: string, apiFieldId: string, keyValue: string, keyFieldId: string) {
-    Column({ space: 12 }) {
-      this.ApiTextField(title, title, apiValue, apiFieldId)
-      this.ApiTextField('', '密钥（可为空）', keyValue, keyFieldId)
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private ImmersiveModeIcon() {
-    Stack() {
-      Column()
-        .width(12)
-        .height(12)
-        .border({ width: 1.5, color: $r('app.color.now_playing_primary_icon') })
-        .borderRadius(4)
-
-      Column()
-        .width(5)
-        .height(1.5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 0, y: 4 })
-      Column()
-        .width(1.5)
-        .height(5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 4, y: 0 })
-
-      Column()
-        .width(5)
-        .height(1.5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 19, y: 4 })
-      Column()
-        .width(1.5)
-        .height(5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 18.5, y: 0 })
-
-      Column()
-        .width(5)
-        .height(1.5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 0, y: 19 })
-      Column()
-        .width(1.5)
-        .height(5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 4, y: 18.5 })
-
-      Column()
-        .width(5)
-        .height(1.5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 19, y: 19 })
-      Column()
-        .width(1.5)
-        .height(5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 18.5, y: 18.5 })
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private DetailIcon() {
-    Stack() {
-      Column()
-        .width(24)
-        .height(24)
-        .border({ width: 1.5, color: $r('app.color.now_playing_primary_icon') })
-        .borderRadius(12)
-
-      Text('i')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.now_playing_primary_icon'))
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private SearchIcon() {
-    Stack() {
-      Column()
-        .width(14)
-        .height(14)
-        .border({ width: 1.5, color: $r('app.color.now_playing_primary_icon') })
-        .borderRadius(7)
-        .position({ x: 1, y: 1 })
-
-      Column()
-        .width(8)
-        .height(1.5)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .rotate({ angle: 45 })
-        .position({ x: 13, y: 18 })
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private DeleteIcon() {
-    Stack() {
-      Column()
-        .width(8)
-        .height(2)
-        .borderRadius(1)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 8, y: 1 })
-
-      Column()
-        .width(18)
-        .height(2)
-        .borderRadius(1)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 3, y: 4 })
-
-      Column()
-        .width(16)
-        .height(17)
-        .border({ width: 1.7, color: $r('app.color.now_playing_primary_icon') })
-        .borderRadius(4)
-        .position({ x: 4, y: 6 })
-
-      Column()
-        .width(1.5)
-        .height(10)
-        .borderRadius(1)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 9, y: 10 })
-
-      Column()
-        .width(1.5)
-        .height(10)
-        .borderRadius(1)
-        .backgroundColor($r('app.color.now_playing_primary_icon'))
-        .position({ x: 14, y: 10 })
-    }
-    .width(24)
-    .height(24)
-  }
-
-  @Builder
-  private MoreMenuItem(title: string, iconType: string, trailingArrow: boolean = false, onTap?: () => void) {
-    Row() {
-      if (iconType === 'immersive') {
-        this.ImmersiveModeIcon()
-      } else if (iconType === 'detail') {
-        this.DetailIcon()
-      } else if (iconType === 'delete') {
-        this.DeleteIcon()
-      } else {
-        this.SearchIcon()
-      }
-
-      Text(title)
-        .layoutWeight(1)
-        .fontSize(17)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.now_playing_primary_icon'))
-        .margin({ left: 14 })
-
-      if (trailingArrow) {
-        SymbolGlyph(iconType === 'search' && this.isOnlineSearchPopupVisible
-          ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_right'))
-          .fontSize(16)
-          .fontColor([$r('app.color.now_playing_secondary_icon')])
-      }
-    }
-    .width('100%')
-    .height(60)
-    .padding({ left: 20, right: 20 })
-    .backgroundColor($r('app.color.now_playing_menu_item'))
-    .borderRadius(18)
-    .hitTestBehavior(HitTestMode.Default)
-    .onClick(() => {
-      if (onTap) {
-        onTap()
-      }
-    })
-  }
-
-  @Builder
-  private SubMenuItem(itemId: string, title: string) {
-    Row() {
-      Text(title)
-        .fontSize(16)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.now_playing_primary_icon'))
-        .layoutWeight(1)
-
-      if (this.fetchStatus === 'loading' && this.activeOnlineSearchItem === itemId) {
-        LoadingProgress()
-          .width(20)
-          .height(20)
-          .color($r('app.color.now_playing_secondary_icon'))
-      }
-    }
-    .width('100%')
-    .height(46)
-    .padding({ left: 18, right: 18 })
-    .backgroundColor(this.activeOnlineSearchItem === itemId
-      ? this.withAlpha(this.isDarkMode ? '#FFFFFF' : '#182431', this.isDarkMode ? 0.14 : 0.08)
-      : this.withAlpha(this.isDarkMode ? '#FFFFFF' : '#182431', this.isDarkMode ? 0.05 : 0.035))
-    .borderRadius(14)
-    .onTouch((event: TouchEvent) => {
-      if (event.type === TouchType.Down) {
-        this.activeOnlineSearchItem = itemId
-      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        if (this.fetchStatus !== 'loading') {
-          this.activeOnlineSearchItem = ''
-        }
-      }
-    })
-    .onClick(() => {
-      this.handleSubMenuAction(itemId)
-    })
   }
 
   private handleSubMenuAction(itemId: string): void {
@@ -2750,7 +2108,6 @@ struct SurfaceNowPlayingView {
           song.coverUri = coverResult.coverUrl
           this.playlistManager.persistPlaylist()
         }
-        this.coverPixelMap = coverResult.pixelMap
         void AudioScanner.updateCurrentCoverFromPixelMap(coverResult.pixelMap)
         this.fetchStatus = 'success'
         this.fetchMessage = '封面获取成功'
@@ -2776,11 +2133,6 @@ struct SurfaceNowPlayingView {
     }, 2000)
   }
 
-  private getDeleteConfirmMessage(): string {
-    const title = this.currentTitle.length > 0 ? this.currentTitle : '当前歌曲'
-    return `确定要删除${title}吗`
-  }
-
   private async confirmDeleteCurrentSong(deleteFile: boolean): Promise<void> {
     if (this.isDeletingSong) {
       return
@@ -2798,627 +2150,37 @@ struct SurfaceNowPlayingView {
     const hasCurrentSong: boolean = PlayerService.getInstance().getCurrentSong() !== null
     this.closeMoreSheet()
     if (!hasCurrentSong && this.onClose) {
-      setTimeout(() => {
-        if (this.onClose) {
-          this.onClose()
-        }
-      }, this.moreSheetAnimationDuration) as number
+      this.onClose()
     }
   }
 
   @Builder
-  private MoreActionSheet() {
-    Column() {
-      if (!this.contentOnly) {
-        // 拖拽手柄。PlayerSurface 的 contentOnly 模式使用居中菜单，不再显示底部 sheet 手柄。
-        Row() {
-          Column()
-            .width(36)
-            .height(4)
-            .borderRadius(2)
-            .backgroundColor(this.isDarkMode
-              ? this.withAlpha('#FFFFFF', 0.2)
-              : this.withAlpha('#182431', 0.16))
-        }
-        .width('100%')
-        .height(20)
-        .justifyContent(FlexAlign.Center)
-        .gesture(
-          PanGesture({ direction: PanDirection.Vertical })
-            .onActionStart(() => {
-              this.sheetStartY = 0
-            })
-            .onActionUpdate((event: GestureEvent) => {
-              const offsetY: number = event.offsetY
-              if (offsetY > 0) {
-                this.sheetDragOffsetY = offsetY
-              } else {
-                this.sheetDragOffsetY = offsetY * 0.15
-              }
-            })
-            .onActionEnd((event: GestureEvent) => {
-              if (this.sheetDragOffsetY > 80 || event.velocityY > 500) {
-                this.closeMoreSheet()
-              } else {
-                animateTo({
-                  duration: 200,
-                  curve: Curve.EaseOut
-                }, () => {
-                  this.sheetDragOffsetY = 0
-                })
-              }
-            })
-        )
+  private CoverPageContent() {
+    NowPlayingPanel({
+      screenWidth: this.getOverlayScreenWidth(),
+      screenHeight: this.getOverlayScreenHeight(),
+      coverSize: this.getOverlayCoverTargetSize(),
+      coverLeft: this.getOverlayCoverTargetLeft(),
+      coverTop: this.getOverlayCoverTargetTop(),
+      titleWidth: this.getOverlayTitleWidth(),
+      titleLeft: this.getOverlayTitleLeft(),
+      titleTop: this.getOverlayTitleTop(),
+      bottomSafeHeight: this.bottomSafeHeight,
+      primaryColor: this.coverPagePrimaryColor,
+      secondaryColor: this.coverPageSecondaryColor,
+      accentColor: this.dominantColor,
+      trackColor: 'rgba(0, 0, 0, 0.13)',
+      shadowColor: this.getCoverShadowColor(),
+      contentOpacity: this.getImmersiveHiddenOpacity(),
+      controlsInteractive: this.canUsePlaybackControls(),
+      onMoreClick: () => {
+        this.openMoreSheet()
+      },
+      onPlaylistClick: () => {
+        this.openPlaylistDialog()
       }
-
-      // 菜单项
-      Column({ space: 10 }) {
-        this.MoreMenuItem('沉浸模式', 'immersive', false, () => {
-          this.enterImmersiveMode()
-        })
-        this.MoreMenuItem('详情', 'detail', false, () => {
-          this.openDetailDialog()
-        })
-        this.MoreMenuItem('在线查找', 'search', true, () => {
-          this.toggleOnlineSearchPopup()
-        })
-        this.MoreMenuItem('删除', 'delete', true, () => {
-          this.openDeleteDialog()
-        })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: this.contentOnly ? 16 : 0, bottom: 16 })
-    }
-    .width('100%')
-  }
-
-  @Builder
-  private DetailRow(label: string, value: string) {
-    Row() {
-      Text(`${label}：`)
-        .width(86)
-        .fontSize(14)
-        .lineHeight(21)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        .flexShrink(0)
-
-      Text(value)
-        .layoutWeight(1)
-        .fontSize(14)
-        .lineHeight(21)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
-  }
-
-  @Builder
-  private DetailDialog() {
-    Column({ space: 14 }) {
-      Text(this.currentTitle.length > 0 ? this.currentTitle : 'Unknown')
-        .width('100%')
-        .fontSize(22)
-        .lineHeight(28)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Scroll() {
-        Column({ space: 8 }) {
-          this.DetailRow('艺术家', this.currentArtist.length > 0 ? this.currentArtist : 'Unknown')
-          this.DetailRow('专辑', this.getDetailAlbumLabel())
-          this.DetailRow('专辑艺术家', 'Unknown')
-          this.DetailRow('作曲家', 'Unknown')
-          this.DetailRow('音轨号', '000')
-          this.DetailRow('碟号', 'Unknown')
-          this.DetailRow('流派', 'Unknown')
-          this.DetailRow('格式', this.getAudioFormatLabel())
-          this.DetailRow('采样率', this.getDetailSampleRateLabel())
-          this.DetailRow('比特率', this.getDetailBitrateLabel())
-          this.DetailRow('时长', formatMs(this.totalDuration))
-          this.DetailRow('大小', this.getSongFileSizeLabel())
-          this.DetailRow('添加时间', this.getSongAddedDateLabel())
-          this.DetailRow('文件名', this.getSongFileName())
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .edgeEffect(EdgeEffect.Spring)
-
-      Button({ type: ButtonType.Normal, stateEffect: true }) {
-        Text('确定')
-          .fontSize(17)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.ohos_id_color_emphasize'))
-      }
-      .width('100%')
-      .height(42)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(18)
-      .onClick(() => {
-        this.closeDetailDialog()
-      })
-    }
-    .width('100%')
-    .height(this.getDetailDialogMaxHeight())
-    .constraintSize({ maxWidth: 430 })
-    .padding({ left: 22, right: 22, top: 24, bottom: 16 })
-    .backgroundColor(this.isDarkMode ? 'rgba(32, 34, 40, 1.0)' : 'rgba(255, 255, 255, 1.0)')
-    .backgroundBlurStyle(BlurStyle.Thick, { colorMode: ThemeColorMode.SYSTEM })
-    .borderRadius(34)
-    .shadow({
-      radius: 40,
-      color: this.getMenuShadowColor(),
-      offsetX: 0,
-      offsetY: 16
     })
-    .opacity(this.detailDialogProgress)
-    .scale({
-      x: this.getDetailDialogScale(),
-      y: this.getDetailDialogScale(),
-      centerX: '50%',
-      centerY: '50%'
-    })
-    .translate({ x: 0, y: this.getDetailDialogTranslateY() })
-  }
-
-  @Builder
-  private DeleteDialog() {
-    Column() {
-      Text('删除歌曲')
-        .width('100%')
-        .fontSize(22)
-        .lineHeight(30)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-
-      Text(this.getDeleteConfirmMessage())
-        .width('100%')
-        .fontSize(15)
-        .lineHeight(22)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        .maxLines(3)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .margin({ top: 18, bottom: 20 })
-
-      Button({ type: ButtonType.Normal, stateEffect: true }) {
-        Text('取消')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.ohos_id_color_emphasize'))
-      }
-      .width('100%')
-      .height(42)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(18)
-      .enabled(!this.isDeletingSong)
-      .onClick(() => {
-        this.closeDeleteDialog()
-      })
-
-      Button({ type: ButtonType.Normal, stateEffect: true }) {
-        Text('删除')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FF3B30')
-      }
-      .width('100%')
-      .height(42)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(18)
-      .enabled(!this.isDeletingSong)
-      .onClick(() => {
-        void this.confirmDeleteCurrentSong(false)
-      })
-
-      Button({ type: ButtonType.Normal, stateEffect: true }) {
-        if (this.isDeletingSong) {
-          LoadingProgress()
-            .width(22)
-            .height(22)
-            .color('#FF3B30')
-        } else {
-          Text('同时删除文件')
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#FF3B30')
-        }
-      }
-      .width('100%')
-      .height(42)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(18)
-      .enabled(!this.isDeletingSong)
-      .onClick(() => {
-        void this.confirmDeleteCurrentSong(true)
-      })
-    }
-    .width('100%')
-    .constraintSize({ maxWidth: 360 })
-    .padding({ left: 24, right: 24, top: 24, bottom: 22 })
-    .backgroundColor(this.isDarkMode ? 'rgba(32, 34, 40, 1.0)' : 'rgba(255, 255, 255, 1.0)')
-    .borderRadius(28)
-    .shadow({
-      radius: 40,
-      color: this.getMenuShadowColor(),
-      offsetX: 0,
-      offsetY: 16
-    })
-    .opacity(this.deleteDialogProgress)
-    .scale({
-      x: this.getDeleteDialogScale(),
-      y: this.getDeleteDialogScale(),
-      centerX: '50%',
-      centerY: '50%'
-    })
-    .translate({ x: 0, y: this.getDeleteDialogTranslateY() })
-  }
-
-  @Builder
-  private OnlineSearchDialog() {
-    Column() {
-      // 标题
-      Row() {
-        Text('在线查找')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.now_playing_primary_icon'))
-      }
-      .width('100%')
-      .height(46)
-      .justifyContent(FlexAlign.Center)
-
-      // 子菜单项
-      this.SubMenuItem('lyrics', '歌词')
-      this.SubMenuItem('cover', '封面')
-      this.SubMenuItem('settings', '设置')
-
-      // 状态提示
-      if (this.fetchMessage.length > 0) {
-        Row() {
-          Text(this.fetchMessage)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.fetchStatus === 'success'
-              ? '#34C759' : (this.fetchStatus === 'error' ? '#FF6B6B' : $r('app.color.now_playing_secondary_icon')))
-        }
-        .width('100%')
-        .height(36)
-        .justifyContent(FlexAlign.Center)
-        .transition(TransitionEffect.opacity(0))
-      }
-
-      // 取消按钮
-      Row() {
-        Text('取消')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.now_playing_secondary_icon'))
-      }
-      .width('100%')
-      .height(44)
-      .justifyContent(FlexAlign.Center)
-      .borderRadius(14)
-      .margin({ top: this.fetchMessage.length > 0 ? 0 : 4 })
-      .onClick(() => {
-        this.closeOnlineSearchPopup()
-      })
-    }
-    .width(300)
-    .padding({ left: 16, right: 16, top: 10, bottom: 14 })
-    .backgroundColor(this.isDarkMode ? 'rgba(32, 34, 40, 1.0)' : 'rgba(255, 255, 255, 1.0)')
-    .borderRadius(26)
-    .shadow({
-      radius: 32,
-      color: this.getMenuShadowColor(),
-      offsetX: 0,
-      offsetY: 12
-    })
-    .opacity(this.onlineSearchPopupProgress)
-    .scale({
-      x: this.getDialogScale(),
-      y: this.getDialogScale(),
-      centerX: '50%',
-      centerY: '50%'
-    })
-  }
-
-  @Builder
-  private ApiSettingsDialog() {
-    Column({ space: 20 }) {
-      Text('API设置')
-        .width('100%')
-        .fontSize(24)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.now_playing_primary_icon'))
-
-      Column({ space: 6 }) {
-        Text('设置 API 后可以使用在线查找功能')
-          .width('100%')
-          .fontSize(14)
-          .lineHeight(22)
-          .fontColor($r('app.color.now_playing_primary_icon'))
-
-        Text('注意，此功能需要连接网络，且使用前您需要保证您拥有相关著作人的授权，否则可能导致法律纠纷，本软件对此不负任何责任。')
-          .width('100%')
-          .fontSize(14)
-          .lineHeight(22)
-          .fontColor($r('app.color.online_search_api_warning'))
-
-        Text('目前支持的协议（点击跳转）：')
-          .width('100%')
-          .fontSize(14)
-          .lineHeight(22)
-          .fontColor($r('app.color.now_playing_primary_icon'))
-
-        Text('https://github.com/hisatri/LrcAPI')
-          .width('100%')
-          .fontSize(14)
-          .lineHeight(22)
-          .fontColor($r('app.color.online_search_api_link'))
-      }
-      .width('100%')
-
-      Column({ space: 22 }) {
-        this.ApiFieldSection('歌词', this.draftLyricApiUrl, 'lyrics_api', this.draftLyricApiKey, 'lyrics_key')
-        this.ApiFieldSection('封面', this.draftCoverApiUrl, 'cover_api', this.draftCoverApiKey, 'cover_key')
-      }
-      .width('100%')
-
-      Row({ space: 16 }) {
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          Text('取消')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.now_playing_primary_icon'))
-        }
-        .layoutWeight(1)
-        .height(52)
-        .backgroundColor(Color.Transparent)
-        .borderRadius(16)
-        .onClick(() => {
-          this.closeApiSettingsDialog(false)
-        })
-
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          Text('确定')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.now_playing_primary_icon'))
-        }
-        .layoutWeight(1)
-        .height(52)
-        .backgroundColor(Color.Transparent)
-        .borderRadius(16)
-        .onClick(() => {
-          this.closeApiSettingsDialog(true)
-        })
-      }
-      .width('100%')
-      .margin({ top: 4 })
-    }
-    .width('100%')
-    .padding({ left: 24, right: 24, top: 26, bottom: 20 })
-    .backgroundColor($r('app.color.online_search_api_dialog_surface'))
-    .backgroundBlurStyle(BlurStyle.Thick, { colorMode: ThemeColorMode.SYSTEM })
-    .borderRadius(30)
-    .shadow({
-      radius: 36,
-      color: this.getMenuShadowColor(),
-      offsetX: 0,
-      offsetY: 16
-    })
-    .opacity(this.apiSettingsDialogProgress)
-    .scale({
-      x: this.getApiSettingsDialogScale(),
-      y: this.getApiSettingsDialogScale(),
-      centerX: '50%',
-      centerY: '50%'
-    })
-    .translate({ x: 0, y: this.getApiSettingsDialogTranslateY() })
-  }
-
-  @Builder
-  private AudioTagRow() {
-    Row({ space: 18 }) {
-      ForEach(this.getAudioTags(), (item: string) => {
-        Text(item)
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.coverPageTertiaryColor)
-      }, (item: string) => item)
-    }
-    .width('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private CoverCard() {
-    Stack() {
-      if (this.coverPixelMap) {
-        Image(this.coverPixelMap)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .draggable(false)
-      } else {
-        Column() {
-          SymbolGlyph($r('sys.symbol.music'))
-            .fontSize(120)
-            .fontColor([this.coverPageSecondaryColor])
-        }
-        .width('100%')
-        .height('100%')
-        .backgroundColor($r('app.color.mini_player_placeholder'))
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-      }
-    }
-      .width(this.getOverlayCoverSize())
-      .height(this.getOverlayCoverSize())
-      .borderRadius(18)
-      .clip(true)
-      .shadow({
-        radius: 24,
-        color: this.getCoverShadowColor(),
-        offsetX: 0,
-        offsetY: 12
-      })
-  }
-
-  @Builder
-  private OverlayMorphLayer() {
-    Stack() {
-      Stack() {
-        if (this.coverPixelMap) {
-          Image(this.coverPixelMap)
-            .width('100%')
-            .height('100%')
-            .objectFit(ImageFit.Cover)
-          .draggable(false)
-        } else {
-          Column() {
-            SymbolGlyph($r('sys.symbol.music'))
-              .fontSize(120)
-              .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-          }
-          .width('100%')
-          .height('100%')
-          .backgroundColor($r('app.color.mini_player_placeholder'))
-          .justifyContent(FlexAlign.Center)
-          .alignItems(HorizontalAlign.Center)
-        }
-      }
-      .width(this.getOverlayCoverSize())
-      .height(this.getOverlayCoverSize())
-      .borderRadius(18)
-      .clip(true)
-      .position({ x: this.getOverlayCoverLeft(), y: this.getOverlayCoverTop() })
-      .shadow({
-        radius: 24,
-        color: this.getCoverShadowColor(),
-        offsetX: 0,
-        offsetY: 12
-      })
-
-      Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
-        .width(this.getOverlayTitleWidth())
-        .height(this.overlayTitleLineHeight)
-        .fontSize(this.overlayTitleFont)
-        .lineHeight(this.overlayTitleLineHeight)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.coverPagePrimaryColor)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .position({ x: this.getOverlayTitleLeft(), y: this.getOverlayTitleTop() })
-        .opacity(this.getImmersiveHiddenOpacity())
-
-      Text(this.currentArtist)
-        .width(this.getOverlayTitleWidth())
-        .height(this.overlayArtistLineHeight)
-        .fontSize(this.overlayArtistFont)
-        .lineHeight(this.overlayArtistLineHeight)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.coverPageSecondaryColor)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(TextAlign.Center)
-        .position({ x: this.getOverlayTitleLeft(), y: this.getOverlayArtistTop() })
-        .opacity(this.getImmersiveHiddenOpacity())
-    }
-    .width('100%')
-    .height('100%')
-    .hitTestBehavior(HitTestMode.Transparent)
-    .zIndex(20)
-  }
-
-  @Builder
-  private ProgressSection() {
-    Row({ space: this.progressInlineGap }) {
-      Text(formatMs(this.isSeeking ? (this.seekValue / 100) * this.totalDuration : this.currentPosition))
-        .width(this.progressTimeLabelWidth)
-        .fontSize(12)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.coverPageSecondaryColor)
-        .textAlign(TextAlign.Start)
-
-      Stack({ alignContent: Alignment.Center }) {
-        Slider({
-          value: this.isSeeking ? this.seekValue : this.progressPercent,
-          min: 0,
-          max: 100,
-          step: 0.1,
-          style: SliderStyle.OutSet
-        })
-          .width('100%')
-          .trackColor(this.coverPageProgressTrackColor)
-          .selectedColor(this.dominantColor)
-          .blockColor(this.coverPagePrimaryColor)
-          .blockSize({ width: 12, height: 12 })
-          .trackThickness(6)
-          .onChange((value: number, mode: SliderChangeMode) => {
-            if (!this.isComponentReady) {
-              return
-            }
-            if (mode === SliderChangeMode.Begin) {
-              this.previewProgressSeek(value)
-            } else if (mode === SliderChangeMode.Moving) {
-              this.previewProgressSeek(value)
-            } else if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-              this.commitProgressSeek(value)
-            }
-          })
-
-        Row()
-          .width('100%')
-          .height(44)
-          .backgroundColor(Color.Transparent)
-          .hitTestBehavior(HitTestMode.Default)
-          .onTouch((event: TouchEvent) => {
-            this.handleProgressTouch(event)
-          })
-          .zIndex(1)
-      }
-      .width(this.getProgressTouchWidth())
-      .height(44)
-      .hitTestBehavior(HitTestMode.Default)
-
-      Text(formatMs(this.totalDuration))
-        .width(this.progressTimeLabelWidth)
-        .fontSize(12)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.coverPageSecondaryColor)
-        .textAlign(TextAlign.End)
-    }
-    .width('100%')
-    .height(44)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private ProgressHitLayer() {
-    Row()
-      .width(this.getProgressTouchWidth())
-      .height(56)
-      .position({ x: this.getProgressTouchLeft(), y: this.getProgressTouchTop() - 6 })
-      .backgroundColor(this.withAlpha('#000000', 0.001))
-      .hitTestBehavior(HitTestMode.Default)
-      .onTouch((event: TouchEvent) => {
-        this.handleProgressTouch(event)
-      })
-      // 独立进度条触摸层，高于 Swiper 内容层和底部按钮层；
-      // 按钮层已限制高度，不再覆盖这里。
-      .zIndex(220)
+      .zIndex(20)
   }
 
   @Builder
@@ -3436,406 +2198,89 @@ struct SurfaceNowPlayingView {
   }
 
   @Builder
-  private SongInfoSection() {
-    Column({ space: 4 }) {
-      Row() {
-        Text(this.currentTitle)
-          .fontSize(32)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.coverPagePrimaryColor)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-
-        SymbolGlyph(this.isCurrentSongFavorite() ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
-          .fontSize(22)
-          .fontColor([this.isCurrentSongFavorite() ? '#FF3B30' :
-            this.coverPageSecondaryColor])
-          .margin({ left: 12 })
-          .onClick(() => {
-            const song = this.getCurrentSong()
-            if (song) {
-              void FavoriteManager.getInstance().toggleFavorite(song)
-            }
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Text(this.currentArtist)
-        .fontSize(18)
-        .fontWeight(FontWeight.Regular)
-        .fontColor(this.coverPageSecondaryColor)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-    }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
-    .padding({ top: 8, bottom: 4 })
-  }
-
-  private isCurrentSongFavorite(): boolean {
-    const song = this.getCurrentSong()
-    if (!song) {
-      return false
-    }
-    try {
-      const arr = JSON.parse(this.favoriteIdsStr) as string[]
-      return new Set(arr).has(song.id)
-    } catch (_) {
-      return false
-    }
-  }
-
-  @Builder
-  private CoverPageTopBar() {
-    Row()
-      .width('100%')
-      .height(48)
-  }
-
-  @Builder
-  private CoverPageContent() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (this.contentOnly) {
-        Stack() {
-          this.OverlayMorphLayer()
-        }
-        .width('100%')
-        .height('100%')
-        .opacity(this.getContentOpacity(0.60))
-      }
-
-      Column({ space: 0 }) {
-        Column()
-          .height(this.topSafeHeight + 2)
-
-        Column() {
-          this.CoverPageTopBar()
-        }
-        .opacity(this.getContentOpacity(0.60))
-        .translate({ x: 0, y: this.getContentTranslateY(0.60, 18) })
-
-        Column()
-          .width('100%')
-          .height(this.getCoverPageTopSpacerHeight())
-
-        if (!this.contentOnly) {
-          Row() {
-            this.CoverCard()
-          }
-          .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .opacity(this.getContentOpacity(0.58) * this.getCoverPageRealContentOpacity())
-          .scale({
-            x: 0.82 + 0.18 * this.getContentOpacity(0.58),
-            y: 0.82 + 0.18 * this.getContentOpacity(0.58),
-            centerX: '50%',
-            centerY: '50%'
-          })
-
-          Column() {
-            this.AudioTagRow()
-          }
-          .width('100%')
-          .height(this.overlayAudioHeight)
-          .justifyContent(FlexAlign.Start)
-          .alignItems(HorizontalAlign.Center)
-          .padding({ top: 12 })
-          .opacity(this.getContentOpacity(0.70) * this.getImmersiveHiddenOpacity())
-          .translate({ x: 0, y: this.getContentTranslateY(0.70, 40) - 18 * this.getImmersiveProgress() })
-          .hitTestBehavior(this.isImmersiveModeShowing() ? HitTestMode.None : HitTestMode.Default)
-        }
-
-        Blank()
-          .layoutWeight(1)
-
-        // 底部进度条和控制按钮已重构到 PlayerSurface 外层。
-        // CoverPageContent 只保留占位，避免 Swiper 页面内部 Column 再次参与 hitTest，
-        // 造成可见按钮和真实点击层分离。
-        Blank()
-          .width('100%')
-          .height(this.getCoverInlineBottomHeight())
-          .hitTestBehavior(HitTestMode.None)
-      }
+  private LyricsPageContent() {
+    LyricView({
+      lyricLines: this.lyricLines,
+      currentIndex: this.lyricIndex,
+      dominantColor: this.dominantColor,
+      isDarkMode: this.isDarkMode
+    })
       .width('100%')
       .height('100%')
-      .padding({ left: 24, right: 24 })
-
-    }
-    .width('100%')
-    .height('100%')
-  }
-
-  @Builder
-  private LyricsPageContent() {
-    Column() {
-      Column()
-        .height(this.topSafeHeight + 4)
-
-      LyricView({
-        lyricLines: this.lyricLines,
-        currentIndex: this.lyricIndex,
-        dominantColor: this.dominantColor,
-        isDarkMode: this.isDarkMode
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .padding({ top: this.topSafeHeight + 4 })
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Stack() {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.getBackdropBaseColor())
-          .opacity(this.getBgOpacity())
-
-        Column()
-          .width('100%')
-          .height('100%')
-          .linearGradient({
-            angle: 160,
-            colors: [
-              [this.coverBackdropTopColor, 0.0],
-              [this.coverBackdropMiddleColor, 0.46],
-              [this.coverBackdropBottomColor, 1.0]
-            ]
-          })
-          .opacity(this.getBgOpacity())
-
-        // 全屏封面页背景只保留整体取色渐变，不再放置带负 offset 的 blur Ellipse。
-        // 旧实现的 Ellipse 从左上角溢入屏幕，展开时会像一块局部半透明遮罩。
-
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.coverBackdropVeilColor)
-          .opacity(this.getBgOpacity())
-      }
-      .width('100%')
-      .height('100%')
-      .clip(true)
-      .hitTestBehavior(HitTestMode.None)
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-
-      if (!this.shouldBuildActiveContent()) {
-        Column()
-          .width('100%')
-          .height('100%')
-      } else if (this.currentIndex < 0 || this.currentTitle.length === 0) {
-        Column({ space: 16 }) {
-          SymbolGlyph($r('sys.symbol.music'))
-            .fontSize(72)
-            .fontColor([this.coverPageSecondaryColor])
-
-          Text('Select a song to start playback')
-            .fontSize(16)
-            .fontColor(this.coverPageSecondaryColor)
-        }
+      Column()
         .width('100%')
         .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-      } else {
-        Swiper(this.coverLyricSwiperController) {
-          this.CoverPageContent()
-          this.LyricsPageContent()
-        }
-        .index(this.coverLyricPageIndex)
-        .indicator(false)
-        .loop(false)
-        .disableSwipe(this.isImmersiveModeShowing())
-        .duration(240)
-        .curve(Curve.EaseInOut)
-        .width('100%')
-        .height('100%')
-        .gesture(
-          PanGesture({ direction: PanDirection.Vertical, distance: 6 })
-            .onActionUpdate((event: GestureEvent) => {
-              this.handlePageSwipeUpdate(event.offsetY)
-            })
-            .onActionEnd((event: GestureEvent) => {
-              this.handlePageSwipeEnd(event.velocityY)
-            })
-        )
-        .onContentDidScroll((_selectedIndex: number, index: number, position: number, _mainAxisLength: number) => {
-          if (index === this.coverPageIndex) {
-            this.emitLyricsProgress(-position)
+        .backgroundColor(this.coverBackdropBaseColor)
+        .linearGradient({
+          angle: 160,
+          colors: [
+            [this.coverBackdropTopColor, 0.0],
+            [this.coverBackdropMiddleColor, 0.46],
+            [this.coverBackdropBottomColor, 1.0]
+          ]
+        })
+        .clip(true)
+        .hitTestBehavior(HitTestMode.None)
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+
+      if (this.shouldBuildActiveContent()) {
+        if (this.currentIndex < 0 || this.currentTitle.length === 0) {
+          Column({ space: 16 }) {
+            SymbolGlyph($r('sys.symbol.music'))
+              .fontSize(72)
+              .fontColor([this.coverPageSecondaryColor])
+
+            Text('Select a song to start playback')
+              .fontSize(16)
+              .fontColor(this.coverPageSecondaryColor)
           }
-        })
-        .onChange((index: number) => {
-          this.coverLyricPageIndex = index
-          this.emitLyricsProgress(index === this.lyricsPageIndex ? 1 : 0)
-        })
-      }
-
-      if (!this.contentOnly && this.modalOverlayActive && !this.isLyricsPageVisible()) {
-        this.OverlayMorphLayer()
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Swiper(this.coverLyricSwiperController) {
+            this.CoverPageContent()
+            this.LyricsPageContent()
+          }
+          .index(this.coverLyricPageIndex)
+          .indicator(false)
+          .loop(false)
+          .disableSwipe(this.isImmersiveModeShowing())
+          .duration(240)
+          .curve(Curve.EaseInOut)
+          .width('100%')
+          .height('100%')
+          .gesture(
+            PanGesture({ direction: PanDirection.Vertical, distance: 6 })
+              .onActionUpdate((event: GestureEvent) => {
+                this.handlePageSwipeUpdate(event.offsetY)
+              })
+              .onActionEnd((event: GestureEvent) => {
+                this.handlePageSwipeEnd(event.velocityY)
+              })
+          )
+          .onContentDidScroll((_selectedIndex: number, index: number, position: number, _mainAxisLength: number) => {
+            if (index === this.coverPageIndex) {
+              this.emitLyricsProgress(-position)
+            }
+          })
+          .onChange((index: number) => {
+            this.coverLyricPageIndex = index
+            this.emitLyricsProgress(index === this.lyricsPageIndex ? 1 : 0)
+          })
+        }
       }
 
       if (this.isImmersiveModeShowing() && !this.isLyricsPageVisible()) {
         this.ImmersiveCoverExitLayer()
-      }
-
-
-      if (this.isMoreSheetVisible) {
-        Stack({ alignContent: Alignment.Center }) {
-          // 半透明遮罩层
-          Column()
-            .width('100%')
-            .height('100%')
-            .backgroundColor(this.getMenuScrimColor())
-            .opacity(this.moreSheetProgress)
-            .hitTestBehavior(HitTestMode.Default)
-            .onTouch((event: TouchEvent) => {
-              event.stopPropagation()
-              if (event.type === TouchType.Up) {
-                this.closeMoreSheet()
-              }
-            })
-            .zIndex(0)
-
-          // PlayerSurface 单组件模式下，更多菜单改为居中弹窗，避免底部 Dock 预留导致面板高度异常。
-          Column() {
-            this.MoreActionSheet()
-          }
-          .width('86%')
-          .constraintSize({ maxWidth: 380 })
-          .backgroundColor($r('app.color.now_playing_menu_panel'))
-          .borderRadius(28)
-          .clip(true)
-          .shadow({
-            radius: 32,
-            color: this.getMenuShadowColor(),
-            offsetX: 0,
-            offsetY: 10
-          })
-          .opacity(this.moreSheetProgress)
-          .scale({
-            x: 0.96 + 0.04 * this.moreSheetProgress,
-            y: 0.96 + 0.04 * this.moreSheetProgress,
-            centerX: '50%',
-            centerY: '50%'
-          })
-          .translate({ x: 0, y: (1 - this.moreSheetProgress) * 18 })
-          .hitTestBehavior(HitTestMode.Default)
-          .zIndex(1)
-
-          // 二级菜单居中弹窗
-          if (this.isOnlineSearchPopupVisible) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.withAlpha('#0D1220', this.isDarkMode ? 0.42 : 0.32))
-              .opacity(this.onlineSearchPopupProgress)
-              .onClick(() => {
-                this.closeOnlineSearchPopup()
-              })
-              .zIndex(2)
-
-            Column() {
-              this.OnlineSearchDialog()
-            }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .hitTestBehavior(HitTestMode.Transparent)
-            .zIndex(3)
-          }
-
-          if (this.isDetailDialogVisible) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.withAlpha('#0D1220', this.isDarkMode ? 0.18 : 0.10))
-              .onClick(() => {
-                this.closeDetailDialog()
-              })
-              .zIndex(2)
-
-            Column() {
-              this.DetailDialog()
-            }
-            .width('100%')
-            .height('100%')
-            .padding({
-              left: 20,
-              right: 20,
-              top: this.topSafeHeight + 24,
-              bottom: this.bottomSafeHeight + 24
-            })
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .hitTestBehavior(HitTestMode.Transparent)
-            .zIndex(3)
-          }
-
-          if (this.isDeleteDialogVisible) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.withAlpha('#0D1220', this.isDarkMode ? 0.44 : 0.34))
-              .opacity(this.deleteDialogProgress)
-              .onClick(() => {
-                this.closeDeleteDialog()
-              })
-              .zIndex(2)
-
-            Column() {
-              this.DeleteDialog()
-            }
-            .width('100%')
-            .height('100%')
-            .padding({
-              left: 20,
-              right: 20,
-              top: this.topSafeHeight + 24,
-              bottom: this.bottomSafeHeight + 24
-            })
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .hitTestBehavior(HitTestMode.Transparent)
-            .zIndex(3)
-          }
-
-          if (this.isApiSettingsDialogVisible) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.withAlpha('#0D1220', this.isDarkMode ? 0.28 : 0.18))
-              .opacity(this.apiSettingsDialogProgress)
-              .onClick(() => {
-                this.closeApiSettingsDialog(false)
-              })
-              .zIndex(2)
-
-            Column() {
-              this.ApiSettingsDialog()
-            }
-            .width('100%')
-            .height('100%')
-            .padding({
-              left: 20,
-              right: 20,
-              top: this.getApiSettingsDialogInset(),
-              bottom: this.getApiSettingsDialogInset()
-            })
-            .alignItems(HorizontalAlign.Center)
-            .justifyContent(FlexAlign.Center)
-            .hitTestBehavior(HitTestMode.Transparent)
-            .zIndex(3)
-          }
-        }
-        .width('100%')
-        .height('100%')
-        .zIndex(300)
       }
     }
     .width('100%')
@@ -3848,19 +2293,6 @@ struct SurfaceNowPlayingView {
 
 @Component
 export struct PlayerSurface {
-  @StorageLink('isPlaying') isPlaying: boolean = false
-  @StorageLink('playMode') playMode: number = PlayMode.SEQUENCE
-  @StorageLink('currentPosition') currentPosition: number = 0
-  @StorageLink('totalDuration') totalDuration: number = 0
-  @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
-  @StorageLink('screenWidthVp') screenWidthVp: number = 0
-  @StorageLink('screenHeightVp') screenHeightVp: number = 0
-  @StorageLink('currentIndex') currentIndex: number = -1
-  @StorageLink('currentTitle') currentTitle: string = ''
-  @StorageLink('dominantColor') dominantColor: string = Colors.DEFAULT_DOMINANT_COLOR
-  @StorageLink('modalOverlayActive') modalOverlayActive: boolean = false
-  @StorageLink('immersiveModeProgress') immersiveModeProgress: number = 0
-
   @Prop progress: number = 0
   @Prop mounted: boolean = false
   @Prop canOpen: boolean = false
@@ -3872,14 +2304,13 @@ export struct PlayerSurface {
   @Prop morphLayerOpacity: number = 0
   @Prop miniInteractive: boolean = false
 
-  @State private outerMoreSheetRequest: number = 0
-  @State private outerOverlayDismissRequest: number = 0
-
   onOpen?: () => void
   onClose?: () => void
   onSwipeUpdate?: (offsetY: number) => void
   onSwipeEnd?: (velocityY: number) => void
   onLyricsProgress?: (progress: number) => void
+
+  private readonly coverGeometryTransitionId: string = 'player_cover_image'
 
   private getContentOpacity(): number {
     return Math.max(0, Math.min(1, this.contentLayerProgress))
@@ -3904,296 +2335,6 @@ export struct PlayerSurface {
     return this.isMorphHitTestEnabled() ? 30 : 5
   }
 
-  private getPrimaryTouch(event: TouchEvent): TouchObject | null {
-    if (event.touches.length > 0) {
-      return event.touches[0]
-    }
-    if (event.changedTouches.length > 0) {
-      return event.changedTouches[0]
-    }
-    return null
-  }
-
-
-
-
-
-  private shouldShowOuterControlsDock(): boolean {
-    return this.mounted && this.progress >= 0.70 && this.currentIndex >= 0 && this.currentTitle.length > 0 &&
-      this.lyricsProgress < 0.995 && this.immersiveModeProgress < 0.05
-  }
-
-  private getOuterLyricsProgress(): number {
-    return Math.max(0, Math.min(1, this.lyricsProgress))
-  }
-
-  private getOuterControlsTranslateX(): number {
-    return -this.getOuterScreenWidth() * this.getOuterLyricsProgress()
-  }
-
-  private getOuterControlsTransitionOpacity(): number {
-    if (!this.shouldShowOuterControlsDock()) {
-      return 0
-    }
-    const p: number = this.getOuterLyricsProgress()
-    const fade: number = Math.max(0, Math.min(1, (p - 0.08) / 0.62))
-    const smoothFade: number = fade * fade * (3 - 2 * fade)
-    return 1 - smoothFade
-  }
-
-  private isOuterControlsInteractive(): boolean {
-    // 菜单/弹窗显示时保持播放控件可见，但不能执行播放控制。
-    // 歌词页横滑过程中，控制区只做视觉跟随，不参与 hitTest，避免阻塞 Swiper。
-    return this.shouldShowOuterControlsDock() && this.getOuterLyricsProgress() < 0.05 && !this.modalOverlayActive
-  }
-
-  private isOuterControlsHitTestEnabled(): boolean {
-    // 弹窗显示时，底部 Dock 仍接收点击，用于点击弹窗外的下方区域关闭弹窗。
-    return this.shouldShowOuterControlsDock() && this.getOuterLyricsProgress() < 0.05 &&
-      (this.modalOverlayActive || this.isOuterControlsInteractive())
-  }
-
-  private getOuterDockHeight(): number {
-    return this.bottomSafeHeight + 292
-  }
-
-  private getOuterScreenWidth(): number {
-    return this.screenWidthVp > 0 ? this.screenWidthVp : 360
-  }
-
-  private getOuterScreenHeight(): number {
-    return this.screenHeightVp > 0 ? this.screenHeightVp : 800
-  }
-
-  private getOuterProgressPercent(): number {
-    if (this.totalDuration <= 0) {
-      return 0
-    }
-    return Math.max(0, Math.min(100, this.currentPosition / this.totalDuration * 100))
-  }
-
-  private requestOuterMoreSheet(source: string): void {
-    this.outerMoreSheetRequest += 1
-  }
-
-  private requestOuterDismissOverlay(): void {
-    this.outerOverlayDismissRequest += 1
-  }
-
-  private handleOuterProgressTap(x: number): void {
-    if (this.totalDuration <= 0) {
-      return
-    }
-    const width: number = Math.max(1, this.getOuterScreenWidth() - 48)
-    const percent: number = Math.max(0, Math.min(1, (x - 24) / width))
-    void PlayerService.getInstance().seekTo(percent * this.totalDuration)
-  }
-
-  private handleOuterModeTap(): void {
-    const next: PlayMode = this.playMode === PlayMode.SEQUENCE ? PlayMode.SINGLE :
-      this.playMode === PlayMode.SINGLE ? PlayMode.SHUFFLE : PlayMode.SEQUENCE
-    PlayerService.getInstance().setPlayMode(next)
-  }
-
-  private normalizeOuterDockY(y: number): number {
-    const dockHeight: number = this.getOuterDockHeight()
-    const screenHeight: number = this.getOuterScreenHeight()
-    if (y > dockHeight) {
-      return y - Math.max(0, screenHeight - dockHeight)
-    }
-    return y
-  }
-
-  private handleOuterControlsDockTouch(_event: TouchEvent): void {
-  }
-
-  private handleOuterControlsDockClick(x: number, y: number): void {
-    if (this.modalOverlayActive) {
-      this.requestOuterDismissOverlay()
-      return
-    }
-    if (!this.isOuterControlsInteractive()) {
-      return
-    }
-
-    if (y < 58) {
-      this.handleOuterProgressTap(x)
-      return
-    }
-
-    const section: number = x < this.getOuterScreenWidth() / 3 ? 0 : x > this.getOuterScreenWidth() * 2 / 3 ? 2 : 1
-    if (y < 168) {
-      if (section === 0) {
-        PlayerService.getInstance().prev()
-      } else if (section === 1) {
-        PlayerService.getInstance().togglePlayPause()
-      } else {
-        PlayerService.getInstance().next()
-      }
-      return
-    }
-
-    if (section === 1) {
-      this.handleOuterModeTap()
-    } else {
-      this.requestOuterMoreSheet('OuterControlsDock root click')
-    }
-  }
-
-
-  @Builder
-  private OuterProgressSection() {
-    Row() {
-      Text(formatMs(this.currentPosition))
-        .width(46)
-        .fontSize(12)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-
-      Stack({ alignContent: Alignment.Start }) {
-        Row()
-          .width('100%')
-          .height(4)
-          .backgroundColor('rgba(0, 0, 0, 0.16)')
-          .borderRadius(2)
-
-        Row()
-          .width(`${this.getOuterProgressPercent()}%`)
-          .height(4)
-          .backgroundColor(this.dominantColor)
-          .borderRadius(2)
-      }
-      .layoutWeight(1)
-      .height(24)
-      .hitTestBehavior(this.isOuterControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-      .onClick((event: ClickEvent) => {
-        this.handleOuterProgressTap(event.x)
-      })
-
-      Text(formatMs(this.totalDuration))
-        .width(46)
-        .fontSize(12)
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-        .textAlign(TextAlign.End)
-    }
-    .width('100%')
-    .height(34)
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private OuterPrimaryButton(icon: Resource, size: number, boxSize: number, actionName: string, action: () => void) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(icon)
-        .fontSize(size)
-        .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-    }
-    .width(boxSize)
-    .height(boxSize)
-    .backgroundColor(actionName === 'play' ? 'rgba(255, 255, 255, 0.22)' : Color.Transparent)
-    .hitTestBehavior(this.isOuterControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      action()
-    })
-  }
-
-  @Builder
-  private OuterSecondaryButton(icon: Resource, actionName: string, action: () => void) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      SymbolGlyph(icon)
-        .fontSize(24)
-        .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-    }
-    .width(56)
-    .height(48)
-    .backgroundColor('rgba(255, 255, 255, 0.001)')
-    .hitTestBehavior(this.isOuterControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      action()
-    })
-  }
-
-  @Builder
-  private OuterMoreIconButton(actionName: string) {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      Row({ space: 3 }) {
-        Circle()
-          .width(4)
-          .height(4)
-          .fill($r('sys.color.ohos_id_color_text_primary'))
-        Circle()
-          .width(4)
-          .height(4)
-          .fill($r('sys.color.ohos_id_color_text_primary'))
-        Circle()
-          .width(4)
-          .height(4)
-          .fill($r('sys.color.ohos_id_color_text_primary'))
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-    }
-    .width(56)
-    .height(48)
-    .backgroundColor('rgba(255, 255, 255, 0.001)')
-    .hitTestBehavior(this.isOuterControlsInteractive() ? HitTestMode.Default : HitTestMode.None)
-    .onClick(() => {
-      this.requestOuterMoreSheet(actionName)
-    })
-  }
-
-  @Builder
-  private OuterControlsDock() {
-    Column({ space: 14 }) {
-      this.OuterProgressSection()
-
-      Row({ space: 34 }) {
-        this.OuterPrimaryButton($r('sys.symbol.backward_end_fill'), 31, 56, 'prev', () => {
-          PlayerService.getInstance().prev()
-        })
-        this.OuterPrimaryButton(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'), 42, 74, 'play', () => {
-          PlayerService.getInstance().togglePlayPause()
-        })
-        this.OuterPrimaryButton($r('sys.symbol.forward_end_fill'), 31, 56, 'next', () => {
-          PlayerService.getInstance().next()
-        })
-      }
-      .width('100%')
-      .height(78)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-
-      Row({ space: 22 }) {
-        this.OuterMoreIconButton('more')
-        this.OuterSecondaryButton(getPlayModeIcon(this.playMode as PlayMode), 'mode', () => {
-          this.handleOuterModeTap()
-        })
-        this.OuterMoreIconButton('playlist')
-      }
-      .width('100%')
-      .height(54)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-
-      Blank()
-        .height(this.bottomSafeHeight + 16)
-    }
-    .width('100%')
-    .height(this.getOuterDockHeight())
-    .padding({ left: 24, right: 24, top: 12 })
-    .backgroundColor('rgba(255, 255, 255, 0.001)')
-    .opacity(this.getOuterControlsTransitionOpacity())
-    .translate({ x: this.getOuterControlsTranslateX(), y: 0 })
-    .hitTestBehavior(this.isOuterControlsHitTestEnabled() ? HitTestMode.Default : HitTestMode.None)
-    .zIndex(50000)
-    .onTouch((event: TouchEvent) => {
-      event.stopPropagation()
-      this.handleOuterControlsDockTouch(event)
-    })
-    .onClick((event: ClickEvent) => {
-      this.handleOuterControlsDockClick(event.x, event.y)
-    })
-  }
-
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       SurfacePlayerMorphHost({
@@ -4203,6 +2344,7 @@ export struct PlayerSurface {
         dockBottomOffset: this.dockBottomOffset,
         lyricsProgress: this.lyricsProgress,
         contentLayerProgress: this.contentLayerProgress,
+        coverGeometryId: this.mounted ? this.coverGeometryTransitionId : '',
         onClose: () => {
           if (this.onClose) {
             this.onClose()
@@ -4214,35 +2356,29 @@ export struct PlayerSurface {
         .hitTestBehavior(this.isMorphHitTestEnabled() ? HitTestMode.Default : HitTestMode.None)
         .zIndex(this.getMorphLayerZIndex())
 
-      Stack({ alignContent: Alignment.Bottom }) {
-        SurfaceNowPlayingView({
-          expandProgress: this.progress,
-          contentOnly: true,
-          activeContent: this.mounted,
-          externalMoreSheetRequest: this.outerMoreSheetRequest,
-          externalDismissRequest: this.outerOverlayDismissRequest,
-          onClose: () => {
-            if (this.onClose) {
-              this.onClose()
-            }
-          },
-          onSwipeUpdate: (offsetY: number) => {
-            if (this.onSwipeUpdate) {
-              this.onSwipeUpdate(offsetY)
-            }
-          },
-          onSwipeEnd: (velocityY: number) => {
-            if (this.onSwipeEnd) {
-              this.onSwipeEnd(velocityY)
-            }
-          },
-          onLyricsProgress: (progress: number) => {
-            if (this.onLyricsProgress) {
-              this.onLyricsProgress(progress)
-            }
+      SurfaceNowPlayingView({
+        activeContent: this.mounted,
+        onClose: () => {
+          if (this.onClose) {
+            this.onClose()
           }
-        })
-      }
+        },
+        onSwipeUpdate: (offsetY: number) => {
+          if (this.onSwipeUpdate) {
+            this.onSwipeUpdate(offsetY)
+          }
+        },
+        onSwipeEnd: (velocityY: number) => {
+          if (this.onSwipeEnd) {
+            this.onSwipeEnd(velocityY)
+          }
+        },
+        onLyricsProgress: (progress: number) => {
+          if (this.onLyricsProgress) {
+            this.onLyricsProgress(progress)
+          }
+        }
+      })
       .width('100%')
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
@@ -4252,27 +2388,23 @@ export struct PlayerSurface {
       .zIndex(this.getContentLayerZIndex())
 
       if (this.miniLayerOpacity > 0.001 || this.miniInteractive) {
-        Column() {
-          SurfaceMiniPlayer({
-            visible: this.canOpen && !this.mounted,
-            opacityValue: this.miniLayerOpacity,
-            interactive: this.miniInteractive,
-            dockBottomOffset: this.miniDockBottomOffset,
-            onOpen: () => {
-              if (this.miniInteractive && this.onOpen) {
-                this.onOpen()
-              }
+        SurfaceMiniPlayer({
+          visible: this.canOpen && (this.miniLayerOpacity > 0.001 || !this.mounted),
+          opacityValue: this.miniLayerOpacity,
+          interactive: this.miniInteractive,
+          dockBottomOffset: this.miniDockBottomOffset,
+          coverGeometryId: this.mounted ? '' : this.coverGeometryTransitionId,
+          onOpen: () => {
+            if (this.miniInteractive && this.onOpen) {
+              this.onOpen()
             }
-          })
-        }
+          }
+        })
         .width('100%')
         .hitTestBehavior(this.isMiniHitTestEnabled() ? HitTestMode.Default : HitTestMode.None)
         .zIndex(this.isMiniHitTestEnabled() ? 140 : 0)
       }
 
-      if (this.shouldShowOuterControlsDock()) {
-        this.OuterControlsDock()
-      }
     }
     .width('100%')
     .height('100%')

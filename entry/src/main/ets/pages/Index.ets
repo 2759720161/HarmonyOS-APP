@@ -1,7 +1,6 @@
 import { Colors, StorageKeys } from '../common/Constants'
 import { SongListView } from '../components/SongListView'
 import { FavoriteView } from '../components/FavoriteView'
-import { FloatingTab } from '../components/FloatingTab'
 import { PlayerSurface } from '../components/PlayerSurface'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 import { image } from '@kit.ImageKit'
@@ -10,6 +9,14 @@ import { AudioPicker } from '../service/AudioPicker'
 import { PlaylistManager } from '../service/PlaylistManager'
 import { common } from '@kit.AbilityKit'
 import { CoverThemeService, CoverPageTheme } from '../service/CoverThemeService'
+import { curves } from '@kit.ArkUI'
+import {
+  HdsNavigation,
+  HdsTabs,
+  HdsTabsController,
+  SystemMaterialParams,
+  hdsMaterial
+} from '@kit.UIDesignKit'
 
 
 @Entry
@@ -37,14 +44,18 @@ struct Index {
   @State private loadingStatus: string = ''
   @State private loadingProgress: string = ''
   @State private lyricsProgress: number = 0
+  @State private immersiveMaterialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE
 
   private readonly playerOpenDuration: number = 520
   private readonly playerCloseDuration: number = 430
   private readonly tabSwitchDuration: number = 250
+  private readonly hdsTabBarHeight: number = 66
+  private readonly hdsTabDockOffset: number = 78
   private readonly dragThreshold: number = 300
   private playerHideTask: number = -1
   private playerOpenTask: number = -1
   private coverThemeTaskToken: number = 0
+  private tabsController: HdsTabsController = new HdsTabsController()
   private readonly coverThemeService: CoverThemeService = CoverThemeService.getInstance()
 
   aboutToAppear(): void {
@@ -56,6 +67,7 @@ struct Index {
       AppStorage.setOrCreate(StorageKeys.SCAN_STATUS, 'idle')
     }
     void this.initCoverThemeService()
+    this.resolveImmersiveMaterialLevel()
     this.syncCover()
   }
 
@@ -214,7 +226,7 @@ struct Index {
     if (this.playerMounted) {
       return this.playerDockBottomOffset
     }
-    return this.shouldReserveFloatingTabSpace() ? 78 : 0
+    return this.shouldReserveHdsTabSpace() ? this.hdsTabDockOffset : 0
   }
 
   private getPageContentScale(): number {
@@ -230,22 +242,12 @@ struct Index {
     return t * t * (3 - 2 * t)
   }
 
-  private getFloatingTabOpacity(): number {
-    if (this.songCount <= 0) {
-      return 0
-    }
-    return 1 - this.transitionT(0.02, 0.16)
-  }
-
-  private isFloatingTabInteractive(): boolean {
-    return this.songCount > 0 && !this.playerMounted && this.playerProgress < 0.05
-  }
-
   private switchTab(tabIndex: number): void {
     if (this.currentTab === tabIndex) {
       return
     }
 
+    this.tabsController.changeIndex(tabIndex)
     animateTo({
       duration: this.tabSwitchDuration,
       curve: Curve.EaseInOut
@@ -353,63 +355,145 @@ struct Index {
     return false
   }
 
+  private getInactiveTabColor(): ResourceColor {
+    return this.isDarkMode ? 'rgba(255, 255, 255, 0.62)' : '#6F5963'
+  }
+
+  private getTabItemColor(tabIndex: number): ResourceColor {
+    return this.currentTab === tabIndex ? this.dominantColor : this.getInactiveTabColor()
+  }
+
+  private resolveImmersiveMaterialLevel(): void {
+    const materialTypes: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes()
+    if (materialTypes.indexOf(hdsMaterial.MaterialType.IMMERSIVE) < 0) {
+      this.immersiveMaterialLevel = hdsMaterial.MaterialLevel.SMOOTH
+      return
+    }
+    this.immersiveMaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE
+  }
+
+  private buildAdaptiveMaterialEffect(): SystemMaterialParams {
+    return {
+      materialType: hdsMaterial.MaterialType.ADAPTIVE,
+      materialLevel: this.immersiveMaterialLevel
+    }
+  }
+
   @Builder
-  private PageContentBuilder() {
-    Column() {
-      if (this.isLoading) {
-        Column() {
-          LoadingProgress()
-            .width(48)
-            .height(48)
-            .color($r('sys.color.ohos_id_color_emphasize'))
+  private customTabBar(tabIndex: number, icon: Resource, text: string): void {
+    Column({ space: 3 }) {
+      SymbolGlyph(icon)
+        .fontSize(23)
+        .fontColor([this.getTabItemColor(tabIndex)])
 
-          Text(this.loadingStatus)
-            .fontSize(14)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .margin({ top: 12 })
-
-          if (this.loadingProgress.length > 0) {
-            Text(this.loadingProgress)
-              .fontSize(12)
-              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-              .margin({ top: 4 })
-          }
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else {
-        Stack() {
-          SongListView({
-            onSelectMusic: () => {
-              this.pickAudioFiles()
-            }
-          })
-            .width('100%')
-            .height('100%')
-            .opacity(this.currentTab === 0 ? 1 : 0)
-            .translate({ x: this.currentTab === 0 ? 0 : -24, y: 0 })
-            .hitTestBehavior(this.currentTab === 0 ? HitTestMode.Default : HitTestMode.None)
-            .zIndex(this.currentTab === 0 ? 1 : 0)
-
-          FavoriteView()
-            .width('100%')
-            .height('100%')
-            .opacity(this.currentTab === 1 ? 1 : 0)
-            .translate({ x: this.currentTab === 1 ? 0 : 24, y: 0 })
-            .hitTestBehavior(this.currentTab === 1 ? HitTestMode.Default : HitTestMode.None)
-            .zIndex(this.currentTab === 1 ? 1 : 0)
-        }
-        .width('100%')
-        .height('100%')
-      }
+      Text(text)
+        .fontSize(11)
+        .fontWeight(this.currentTab === tabIndex ? FontWeight.Bold : FontWeight.Medium)
+        .fontColor(this.getTabItemColor(tabIndex))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .scale({
+      x: this.currentTab === tabIndex ? 1.06 : 0.96,
+      y: this.currentTab === tabIndex ? 1.06 : 0.96
+    })
+    .translate({ y: this.currentTab === tabIndex ? -2 : 0 })
+    .opacity(this.currentTab === tabIndex ? 1 : 0.82)
+    .animation({ duration: 320, curve: curves.springMotion() })
   }
 
-  private shouldReserveFloatingTabSpace(): boolean {
+  @Builder
+  private PageContentBuilder() {
+    if (this.isLoading) {
+      Column() {
+        LoadingProgress()
+          .width(48)
+          .height(48)
+          .color($r('sys.color.ohos_id_color_emphasize'))
+
+        Text(this.loadingStatus)
+          .fontSize(14)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .margin({ top: 12 })
+
+        if (this.loadingProgress.length > 0) {
+          Text(this.loadingProgress)
+            .fontSize(12)
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+            .margin({ top: 4 })
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+    } else {
+      HdsNavigation() {
+        HdsTabs({ controller: this.tabsController, index: this.currentTab }) {
+          TabContent() {
+            SongListView({
+              onSelectMusic: () => {
+                this.pickAudioFiles()
+              }
+            })
+              .width('100%')
+              .height('100%')
+          }
+          .tabBar(this.customTabBar(0, $r('sys.symbol.music'), '歌曲'))
+
+          TabContent() {
+            FavoriteView()
+              .width('100%')
+              .height('100%')
+          }
+          .tabBar(this.customTabBar(1, $r('sys.symbol.heart'), '收藏'))
+        }
+        .vertical(false)
+        .barPosition(BarPosition.End)
+        .barMode(BarMode.Fixed)
+        .scrollable(true)
+        .animationDuration(240)
+        .barHeight(this.hdsTabBarHeight)
+        .barOverlap(true)
+        .barFloatingStyle({
+          barSideMargin: 18,
+          barBottomMargin: this.bottomSafeHeight + 24,
+          thermoCtrl: true,
+          systemMaterialEffect: this.buildAdaptiveMaterialEffect()
+        })
+        .onChange((index: number) => {
+          this.currentTab = index
+        })
+      }
+      .mode(NavigationMode.Stack)
+      .hideBackButton(true)
+      .hideTitleBar(true)
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('sys.color.ohos_id_color_background'))
+    }
+  }
+
+  private shouldReserveHdsTabSpace(): boolean {
     return this.songCount > 0 && !this.playerMounted && this.playerProgress <= 0.001
+  }
+
+  private shouldUseFullPlayerLayer(): boolean {
+    return this.playerMounted || this.playerProgress > 0.001
+  }
+
+  private shouldMountPlayerLayer(): boolean {
+    return this.shouldUseFullPlayerLayer() || this.canOpenNowPlaying()
+  }
+
+  private getMiniPlayerLayerHeight(): number {
+    if (!this.canOpenNowPlaying()) {
+      return 0
+    }
+    return this.bottomSafeHeight + 20 + this.getMiniDockBottomOffset() + 64
   }
 
   @Builder
@@ -468,32 +552,15 @@ struct Index {
         .hitTestBehavior(HitTestMode.Transparent)
         .zIndex(10)
 
-      Stack() {
-        this.PlayerContainer()
+      if (this.shouldMountPlayerLayer()) {
+        Stack() {
+          this.PlayerContainer()
+        }
+        .width('100%')
+        .height(this.shouldUseFullPlayerLayer() ? '100%' : this.getMiniPlayerLayerHeight())
+        .hitTestBehavior(this.shouldUseFullPlayerLayer() ? HitTestMode.Default : HitTestMode.Transparent)
+        .zIndex(30)
       }
-      .width('100%')
-      .height('100%')
-      .zIndex(30)
-
-      Column() {
-        FloatingTab({
-          currentTab: this.currentTab,
-          dominantColor: this.dominantColor,
-          isDarkMode: this.isDarkMode,
-          onTabChange: (tabIndex: number) => {
-            this.switchTab(tabIndex)
-          }
-        })
-      }
-      .width('100%')
-      .padding({
-        left: 18,
-        right: 18,
-        bottom: this.bottomSafeHeight + 24
-      })
-      .opacity(this.getFloatingTabOpacity())
-      .hitTestBehavior(this.isFloatingTabInteractive() ? HitTestMode.Default : HitTestMode.None)
-      .zIndex(40)
     }
     .width('100%')
     .height('100%')
