@@ -399,6 +399,7 @@ struct NowPlayingCoverSection {
   @Prop top: number = 0
   @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @Prop opacityValue: number = 1
+  @Prop cornerRadiusValue: number = 14
   @Prop coverGeometryId: string = ''
 
   @State private coverPixelMap: image.PixelMap | null = null
@@ -440,7 +441,7 @@ struct NowPlayingCoverSection {
     }
     .width(this.sizeValue)
     .height(this.sizeValue)
-    .borderRadius(this.sizeValue * 0.12)
+    .borderRadius(this.cornerRadiusValue)
     .clip(true)
     .shadow({
       radius: 36,
@@ -703,6 +704,9 @@ struct NowPlayingPanel {
   @Prop trackColor: string = 'rgba(0, 0, 0, 0.13)'
   @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @Prop contentOpacity: number = 1
+  @Prop contentProgress: number = 1
+  @Prop coverProgress: number = 1
+  @Prop coverOpacity: number = 1
   @Prop controlsInteractive: boolean = true
   @Prop coverGeometryId: string = ''
 
@@ -781,87 +785,120 @@ struct NowPlayingPanel {
     return this.getSecondaryStartLeft() + 220
   }
 
+  private getContentProgress(): number {
+    return Math.max(0, Math.min(1, this.contentProgress))
+  }
+
+  private getCoverProgress(): number {
+    return Math.max(0, Math.min(1, this.coverProgress))
+  }
+
+  private getContentOffset(distance: number): number {
+    return distance * (1 - this.getContentProgress())
+  }
+
+  private shouldBuildChromeContent(): boolean {
+    return this.contentOpacity > 0.001 || this.getContentProgress() > 0.001
+  }
+
+  private getCoverCornerRadius(): number {
+    const miniRadius: number = 14
+    const fullRadius: number = this.coverSize * 0.12
+    return miniRadius + (fullRadius - miniRadius) * this.getCoverProgress()
+  }
+
   build() {
     Stack() {
-      NowPlayingSongInfoSection({
-        widthValue: this.titleWidth,
-        left: this.titleLeft,
-        top: this.titleTop,
-        primaryColor: this.primaryColor,
-        secondaryColor: this.secondaryColor,
-        opacityValue: this.contentOpacity
-      })
-
       NowPlayingCoverSection({
         sizeValue: this.coverSize,
         left: this.coverLeft,
         top: this.coverTop,
         shadowColor: this.shadowColor,
-        opacityValue: 1,
+        opacityValue: this.coverOpacity,
+        cornerRadiusValue: this.getCoverCornerRadius(),
         coverGeometryId: this.coverGeometryId
       })
 
-      NowPlayingProgressSection({
-        accentColor: this.accentColor,
-        trackColor: this.trackColor,
-        interactive: this.controlsInteractive
-      })
-        .width(this.getProgressWidth())
-        .height(34)
-        .position({ x: this.getHorizontalPadding(), y: this.getProgressTop() })
-        .opacity(this.contentOpacity)
+      if (this.shouldBuildChromeContent()) {
+        NowPlayingSongInfoSection({
+          widthValue: this.titleWidth,
+          left: this.titleLeft,
+          top: this.titleTop,
+          primaryColor: this.primaryColor,
+          secondaryColor: this.secondaryColor,
+          opacityValue: this.contentOpacity
+        })
+          .translate({ y: this.getContentOffset(12) })
 
-      PreviousTrackButton({
-        iconColor: this.primaryColor,
-        interactive: this.controlsInteractive
-      })
-        .position({ x: this.getPrimaryPreviousLeft(), y: this.getPrimarySideTop() })
-        .opacity(this.contentOpacity)
+        NowPlayingProgressSection({
+          accentColor: this.accentColor,
+          trackColor: this.trackColor,
+          interactive: this.controlsInteractive
+        })
+          .width(this.getProgressWidth())
+          .height(34)
+          .position({ x: this.getHorizontalPadding(), y: this.getProgressTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(18) })
 
-      PlayPauseTrackButton({
-        iconColor: this.primaryColor,
-        interactive: this.controlsInteractive
-      })
-        .position({ x: this.getPrimaryPlayLeft(), y: this.getPrimaryTop() })
-        .opacity(this.contentOpacity)
+        PreviousTrackButton({
+          iconColor: this.primaryColor,
+          interactive: this.controlsInteractive
+        })
+          .position({ x: this.getPrimaryPreviousLeft(), y: this.getPrimarySideTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(28) })
 
-      NextTrackButton({
-        iconColor: this.primaryColor,
-        interactive: this.controlsInteractive
-      })
-        .position({ x: this.getPrimaryNextLeft(), y: this.getPrimarySideTop() })
-        .opacity(this.contentOpacity)
+        PlayPauseTrackButton({
+          iconColor: this.primaryColor,
+          interactive: this.controlsInteractive
+        })
+          .position({ x: this.getPrimaryPlayLeft(), y: this.getPrimaryTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(32) })
 
-      MoreMenuControlButton({
-        iconColor: this.secondaryColor,
-        interactive: this.controlsInteractive,
-        onAction: () => {
-          if (this.onMoreClick) {
-            this.onMoreClick()
+        NextTrackButton({
+          iconColor: this.primaryColor,
+          interactive: this.controlsInteractive
+        })
+          .position({ x: this.getPrimaryNextLeft(), y: this.getPrimarySideTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(28) })
+
+        MoreMenuControlButton({
+          iconColor: this.secondaryColor,
+          interactive: this.controlsInteractive,
+          onAction: () => {
+            if (this.onMoreClick) {
+              this.onMoreClick()
+            }
           }
-        }
-      })
-        .position({ x: this.getSecondaryStartLeft(), y: this.getSecondaryTop() })
-        .opacity(this.contentOpacity)
+        })
+          .position({ x: this.getSecondaryStartLeft(), y: this.getSecondaryTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(36) })
 
-      PlayModeControlButton({
-        iconColor: this.secondaryColor,
-        interactive: this.controlsInteractive
-      })
-        .position({ x: this.getSecondaryModeLeft(), y: this.getSecondaryTop() })
-        .opacity(this.contentOpacity)
+        PlayModeControlButton({
+          iconColor: this.secondaryColor,
+          interactive: this.controlsInteractive
+        })
+          .position({ x: this.getSecondaryModeLeft(), y: this.getSecondaryTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(36) })
 
-      PlaylistControlButton({
-        iconColor: this.secondaryColor,
-        interactive: this.controlsInteractive,
-        onAction: () => {
-          if (this.onPlaylistClick) {
-            this.onPlaylistClick()
+        PlaylistControlButton({
+          iconColor: this.secondaryColor,
+          interactive: this.controlsInteractive,
+          onAction: () => {
+            if (this.onPlaylistClick) {
+              this.onPlaylistClick()
+            }
           }
-        }
-      })
-        .position({ x: this.getSecondaryPlaylistLeft(), y: this.getSecondaryTop() })
-        .opacity(this.contentOpacity)
+        })
+          .position({ x: this.getSecondaryPlaylistLeft(), y: this.getSecondaryTop() })
+          .opacity(this.contentOpacity)
+          .translate({ y: this.getContentOffset(36) })
+      }
     }
     .width('100%')
     .height('100%')
@@ -887,23 +924,35 @@ struct SurfaceNowPlayingView {
   @StorageLink('immersiveModeActive') immersiveModeActive: boolean = false
   @StorageLink('immersiveModeProgress') immersiveModeProgress: number = 0
 
+  @Prop surfaceActive: boolean = false
   @Prop activeContent: boolean = false
   @Prop coverGeometryId: string = ''
+  @Prop contentProgress: number = 1
+  @Prop backgroundProgress: number = 1
+  @Prop interactive: boolean = true
   onClose?: () => void
   onLyricsProgress?: (progress: number) => void
 
   @State private dragOffsetY: number = 0
 
-  private shouldBuildActiveContent(): boolean {
-    return this.activeContent
+  private shouldBuildSurfaceContent(): boolean {
+    return this.surfaceActive || this.activeContent || this.backgroundProgress > 0.001
+  }
+
+  private getActiveContentProgress(): number {
+    return Math.max(0, Math.min(1, this.contentProgress))
+  }
+
+  private getActiveContentOpacity(): number {
+    return this.getActiveContentProgress() * this.getImmersiveHiddenOpacity()
   }
 
   private canUsePlaybackControls(): boolean {
-    return !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
+    return this.activeContent && this.interactive && !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
   }
 
   private canUseCloseGesture(): boolean {
-    return this.activeContent && !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
+    return this.activeContent && this.interactive && !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
   }
 
   private hasLocalOverlayVisible(): boolean {
@@ -1615,13 +1664,14 @@ struct SurfaceNowPlayingView {
   }
 
   private getOverlayTitleTop(): number {
-    const topLimit = this.topSafeHeight + this.overlayHeaderTopOffset
-    const coverTop = this.getOverlayCoverTop()
-    return this.topSafeHeight + ((coverTop - topLimit) - 68) / 2
+    const preferredTop = this.getOverlayCoverTargetTop() + this.getOverlayCoverTargetSize() + 20
+    const minTop = this.getOverlayCoverTargetTop() + this.getOverlayCoverTargetSize() + 12
+    const maxTop = this.getProgressSectionTop() - 86
+    return Math.max(minTop, Math.min(preferredTop, maxTop))
   }
 
   private getOverlayTitleWidth(): number {
-    return Math.min(this.getOverlayScreenWidth() - 48, this.getOverlayCoverSize() + 28)
+    return Math.min(this.getOverlayScreenWidth() - 48, this.getOverlayCoverTargetSize() + 28)
   }
 
   private getOverlayTitleLeft(): number {
@@ -1803,7 +1853,10 @@ struct SurfaceNowPlayingView {
       accentColor: this.dominantColor,
       trackColor: 'rgba(0, 0, 0, 0.13)',
       shadowColor: this.getCoverShadowColor(),
-      contentOpacity: this.getImmersiveHiddenOpacity(),
+      contentOpacity: this.getActiveContentOpacity(),
+      contentProgress: this.getActiveContentProgress(),
+      coverProgress: this.backgroundProgress,
+      coverOpacity: Math.max(0.001, this.backgroundProgress),
       controlsInteractive: this.canUsePlaybackControls(),
       coverGeometryId: this.coverGeometryId,
       onMoreClick: () => {
@@ -1827,7 +1880,8 @@ struct SurfaceNowPlayingView {
     .height(44)
     .position({ x: 20, y: this.topSafeHeight + 10 })
     .backgroundColor('rgba(255, 255, 255, 0.18)')
-    .hitTestBehavior(this.hasLocalOverlayVisible() ? HitTestMode.None : HitTestMode.Default)
+    .opacity(this.getActiveContentOpacity())
+    .hitTestBehavior(this.canUsePlaybackControls() ? HitTestMode.Default : HitTestMode.None)
     .onClick(() => {
       if (this.onClose) {
         this.onClose()
@@ -1879,11 +1933,12 @@ struct SurfaceNowPlayingView {
             [this.coverBackdropBottomColor, 1.0]
           ]
         })
+        .opacity(this.backgroundProgress)
         .clip(true)
         .hitTestBehavior(HitTestMode.None)
         .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
 
-      if (this.shouldBuildActiveContent()) {
+      if (this.shouldBuildSurfaceContent()) {
         if (this.currentIndex < 0 || this.currentTitle.length === 0) {
           Column({ space: 16 }) {
             SymbolGlyph($r('sys.symbol.music'))
@@ -1898,6 +1953,7 @@ struct SurfaceNowPlayingView {
           .height('100%')
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
+          .opacity(this.getActiveContentOpacity())
         } else {
           Swiper(this.coverLyricSwiperController) {
             this.CoverPageContent()
@@ -1906,7 +1962,7 @@ struct SurfaceNowPlayingView {
           .index(this.coverLyricPageIndex)
           .indicator(false)
           .loop(false)
-          .disableSwipe(this.isImmersiveModeShowing())
+          .disableSwipe(!this.activeContent || !this.interactive || this.isImmersiveModeShowing())
           .duration(240)
           .curve(Curve.EaseInOut)
           .width('100%')
@@ -1927,7 +1983,7 @@ struct SurfaceNowPlayingView {
         this.ImmersiveCoverExitLayer()
       }
 
-      if (this.shouldBuildActiveContent()) {
+      if (this.activeContent) {
         this.CloseButton()
       }
     }
@@ -1951,16 +2007,24 @@ struct SurfaceNowPlayingView {
 
 @Component
 export struct PlayerSurface {
+  @Prop surfaceActive: boolean = false
   @Prop activeContent: boolean = false
   @Prop coverGeometryId: string = 'player_cover_image'
+  @Prop contentProgress: number = 1
+  @Prop backgroundProgress: number = 1
+  @Prop interactive: boolean = true
 
   onClose?: () => void
   onLyricsProgress?: (progress: number) => void
 
   build() {
     SurfaceNowPlayingView({
+      surfaceActive: this.surfaceActive,
       activeContent: this.activeContent,
       coverGeometryId: this.coverGeometryId,
+      contentProgress: this.contentProgress,
+      backgroundProgress: this.backgroundProgress,
+      interactive: this.interactive,
       onClose: () => {
         if (this.onClose) {
           this.onClose()
@@ -1976,6 +2040,6 @@ export struct PlayerSurface {
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .clip(true)
-      .hitTestBehavior(this.activeContent ? HitTestMode.Default : HitTestMode.None)
+      .hitTestBehavior(this.surfaceActive ? HitTestMode.Default : HitTestMode.None)
   }
 }

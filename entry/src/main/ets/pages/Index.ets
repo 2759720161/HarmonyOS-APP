@@ -40,6 +40,11 @@ struct Index {
   @StorageLink('currentTab') currentTab: number = 0
 
   @State private isPlayerExpanded: boolean = false
+  @State private playerLayerMounted: boolean = false
+  @State private playerBackgroundProgress: number = 0
+  @State private playerContentProgress: number = 0
+  @State private playerAnimating: boolean = false
+  @State private playerReopenBlocked: boolean = false
   @State private coverPixelMap: image.PixelMap | null = null
   @State private isLoading: boolean = false
   @State private loadingStatus: string = ''
@@ -57,6 +62,17 @@ struct Index {
   private readonly hdsMiniBarLargeWidth: number = 320
   private readonly hdsMiniBarClickGuardDuration: number = 760
   private readonly coverGeometryTransitionId: string = 'player_cover_image'
+  private readonly playerOpenDuration: number = 520
+  private readonly playerCloseDuration: number = 500
+  private readonly playerCloseSettleDuration: number = 620
+  private readonly playerCloseContentDuration: number = 100
+  private readonly playerContentDelay: number = 300
+  private readonly playerContentDuration: number = 180
+  private readonly playerReopenGuardDuration: number = 180
+  private playerOpenTask: number = -1
+  private playerCloseTask: number = -1
+  private playerContentTask: number = -1
+  private playerReopenGuardTask: number = -1
   private hdsMiniBarGuardTask: number = -1
   private hdsMiniBarStateTask: number = -1
   private hdsMiniBarGuardUntil: number = 0
@@ -81,6 +97,7 @@ struct Index {
   aboutToDisappear(): void {
     this.clearHdsMiniBarGuardTask()
     this.clearHdsMiniBarStateTask()
+    this.clearPlayerTasks()
   }
 
   private async initCoverThemeService(): Promise<void> {
@@ -204,12 +221,34 @@ struct Index {
     })
   }
 
+  private clearPlayerTasks(): void {
+    if (this.playerOpenTask >= 0) {
+      clearTimeout(this.playerOpenTask)
+      this.playerOpenTask = -1
+    }
+
+    if (this.playerCloseTask >= 0) {
+      clearTimeout(this.playerCloseTask)
+      this.playerCloseTask = -1
+    }
+
+    if (this.playerContentTask >= 0) {
+      clearTimeout(this.playerContentTask)
+      this.playerContentTask = -1
+    }
+
+    if (this.playerReopenGuardTask >= 0) {
+      clearTimeout(this.playerReopenGuardTask)
+      this.playerReopenGuardTask = -1
+    }
+  }
+
   private openNowPlaying(): void {
     if (!this.canOpenNowPlaying()) {
       return
     }
 
-    if (this.isPlayerExpanded) {
+    if (this.playerReopenBlocked) {
       return
     }
 
@@ -217,29 +256,96 @@ struct Index {
       return
     }
 
-    this.lyricsProgress = 0
-    animateTo({
-      curve: curves.springMotion(0.4, 0.8)
-    }, () => {
-      this.isPlayerExpanded = true
-    })
-  }
-
-  private closeNowPlaying(): void {
-    if (!this.isPlayerExpanded) {
+    if (this.isPlayerExpanded || this.playerAnimating) {
       return
     }
 
+    this.clearPlayerTasks()
+    this.playerAnimating = true
+    this.playerContentProgress = 0
+    this.playerBackgroundProgress = 0
     this.lyricsProgress = 0
+    this.playerLayerMounted = true
+
+    this.playerOpenTask = setTimeout(() => {
+      this.playerOpenTask = -1
+      animateTo({
+        duration: this.playerOpenDuration,
+        curve: curves.springMotion(0.36, 0.82)
+      }, () => {
+        this.isPlayerExpanded = true
+        this.playerBackgroundProgress = 1
+      })
+
+      this.playerContentTask = setTimeout(() => {
+        this.playerContentTask = -1
+        animateTo({
+          duration: this.playerContentDuration,
+          curve: Curve.EaseOut
+        }, () => {
+          this.playerContentProgress = 1
+        })
+      }, this.playerContentDelay) as number
+
+      this.playerOpenTask = setTimeout(() => {
+        this.playerOpenTask = -1
+        this.playerAnimating = false
+      }, this.playerOpenDuration + 40) as number
+    }, 16) as number
+  }
+
+  private closeNowPlaying(): void {
+    if (!this.isPlayerExpanded && !this.playerLayerMounted) {
+      return
+    }
+
+    this.clearPlayerTasks()
+    this.playerAnimating = true
+    this.lyricsProgress = 0
+
+    AppStorage.setOrCreate(StorageKeys.MODAL_OVERLAY_ACTIVE, false)
+    AppStorage.setOrCreate(StorageKeys.IMMERSIVE_MODE_ACTIVE, false)
+    AppStorage.setOrCreate(StorageKeys.IMMERSIVE_MODE_PROGRESS, 0)
+
     animateTo({
-      curve: curves.springMotion(0.4, 0.85)
+      duration: this.playerCloseContentDuration,
+      curve: Curve.EaseOut
     }, () => {
-      this.isPlayerExpanded = false
+      this.playerContentProgress = 0
     })
+
+    this.playerContentTask = setTimeout(() => {
+      this.playerContentTask = -1
+      this.playerOpenTask = setTimeout(() => {
+        this.playerOpenTask = -1
+
+        animateTo({
+          duration: this.playerCloseDuration,
+          curve: Curve.Friction
+        }, () => {
+          this.isPlayerExpanded = false
+          this.playerBackgroundProgress = 0
+          this.playerLayerMounted = false
+        })
+
+        this.playerCloseTask = setTimeout(() => {
+          this.playerCloseTask = -1
+          this.playerContentProgress = 0
+          this.playerBackgroundProgress = 0
+          this.playerAnimating = false
+          this.playerReopenBlocked = true
+
+          this.playerReopenGuardTask = setTimeout(() => {
+            this.playerReopenGuardTask = -1
+            this.playerReopenBlocked = false
+          }, this.playerReopenGuardDuration) as number
+        }, this.playerCloseSettleDuration) as number
+      }, 16) as number
+    }, this.playerCloseContentDuration) as number
   }
 
   onBackPress(): boolean | void {
-    if (this.isPlayerExpanded) {
+    if (this.isPlayerExpanded || this.playerLayerMounted) {
       this.closeNowPlaying()
       return true
     }
@@ -276,8 +382,30 @@ struct Index {
     }
   }
 
-  private shouldShowHdsMiniBar(): boolean {
-    return this.canOpenNowPlaying() && !this.isPlayerExpanded
+  private shouldBuildHdsMiniBar(): boolean {
+    return this.canOpenNowPlaying()
+  }
+
+  private getHdsMiniBarOpacity(): number {
+    if (!this.canOpenNowPlaying()) {
+      return 0
+    }
+
+    if (this.playerAnimating) {
+      return 1
+    }
+
+    return this.playerLayerMounted ? 0 : 1
+  }
+
+  private shouldHdsMiniBarInteractive(): boolean {
+    return this.canOpenNowPlaying() && !this.playerLayerMounted && !this.playerAnimating &&
+      !this.playerReopenBlocked && !this.hdsMiniBarCompactContent && !this.hdsMiniBarAnimating &&
+      !this.isHdsMiniBarClickGuardActive()
+  }
+
+  private shouldUseMiniCoverGeometry(): boolean {
+    return this.canOpenNowPlaying() && this.playerAnimating && this.getHdsMiniBarOpacity() > 0.01
   }
 
   private updateHdsMiniBarStyle(style: HdsBarStyle): void {
@@ -289,7 +417,13 @@ struct Index {
   }
 
   private onHdsMiniBarAnimationEnd(style: HdsBarStyle): void {
-    this.deferHdsMiniBarState(style, false)
+    this.pendingHdsMiniBarCollapsed = style === HdsBarStyle.COLLAPSE
+    this.clearHdsMiniBarStateTask()
+    this.hdsMiniBarStateTask = setTimeout(() => {
+      this.hdsMiniBarStateTask = -1
+      this.hdsMiniBarCompactContent = this.pendingHdsMiniBarCollapsed
+      this.hdsMiniBarAnimating = false
+    }, 0) as number
   }
 
   private isHdsMiniBarClickGuardActive(): boolean {
@@ -332,7 +466,7 @@ struct Index {
       systemMaterialEffect: this.buildAdaptiveMaterialEffect()
     }
 
-    if (this.shouldShowHdsMiniBar()) {
+    if (this.shouldBuildHdsMiniBar()) {
       floatingStyle.miniBar = {
         miniBarBuilder: () => {
           this.HdsMiniPlayerBarBuilder()
@@ -369,13 +503,13 @@ struct Index {
   private HdsMiniPlayerBarBuilder() {
     SurfaceMiniPlayer({
       visible: this.canOpenNowPlaying(),
-      opacityValue: this.shouldShowHdsMiniBar() ? 1 : 0,
-      interactive: this.shouldShowHdsMiniBar(),
+      opacityValue: this.getHdsMiniBarOpacity(),
+      interactive: this.shouldHdsMiniBarInteractive(),
       dockBottomOffset: 0,
       embeddedInHdsMaterial: true,
       compactMode: this.hdsMiniBarCompactContent,
-      animating: this.hdsMiniBarAnimating,
-      coverGeometryId: this.shouldShowHdsMiniBar() ? this.coverGeometryTransitionId : '',
+      animating: this.hdsMiniBarAnimating || this.playerAnimating,
+      coverGeometryId: this.shouldUseMiniCoverGeometry() ? this.coverGeometryTransitionId : '',
       onOpen: () => {
         this.openNowPlaying()
       }
@@ -483,7 +617,7 @@ struct Index {
   }
 
   private shouldUseFullPlayerLayer(): boolean {
-    return this.isPlayerExpanded
+    return this.playerLayerMounted || this.isPlayerExpanded
   }
 
   private shouldMountPlayerLayer(): boolean {
@@ -493,8 +627,12 @@ struct Index {
   @Builder
   private PlayerContainer() {
     PlayerSurface({
-      activeContent: this.isPlayerExpanded,
+      surfaceActive: this.playerLayerMounted,
+      activeContent: this.playerLayerMounted && this.playerContentProgress > 0.001,
       coverGeometryId: this.coverGeometryTransitionId,
+      contentProgress: this.playerContentProgress,
+      backgroundProgress: this.playerBackgroundProgress,
+      interactive: this.isPlayerExpanded && !this.playerAnimating && this.playerContentProgress > 0.95,
       onClose: () => {
         this.closeNowPlaying()
       },
@@ -514,20 +652,19 @@ struct Index {
       .width('100%')
       .height('100%')
       .scale({
-        x: this.isPlayerExpanded ? 0.975 : 1,
-        y: this.isPlayerExpanded ? 0.975 : 1,
+        x: 1 - 0.025 * this.playerBackgroundProgress,
+        y: 1 - 0.025 * this.playerBackgroundProgress,
         centerX: '50%',
         centerY: '50%'
       })
-      .opacity(this.isPlayerExpanded ? 0.72 : 1)
+      .opacity(1 - 0.28 * this.playerBackgroundProgress)
 
-      if (this.isPlayerExpanded) {
+      if (this.playerBackgroundProgress > 0.01) {
         Column()
           .width('100%')
           .height('100%')
-          .backgroundColor('rgba(0, 0, 0, 0.10)')
+          .backgroundColor(`rgba(0, 0, 0, ${0.10 * this.playerBackgroundProgress})`)
           .hitTestBehavior(HitTestMode.Transparent)
-          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseInOut }))
           .zIndex(10)
       }
 
@@ -537,12 +674,7 @@ struct Index {
         }
         .width('100%')
         .height('100%')
-        .hitTestBehavior(HitTestMode.Default)
-        .transition(
-          TransitionEffect.translate({ y: '100%' })
-            .combine(TransitionEffect.OPACITY)
-            .animation({ curve: curves.springMotion(0.4, 0.8) })
-        )
+        .hitTestBehavior(this.playerLayerMounted ? HitTestMode.Default : HitTestMode.None)
         .zIndex(30)
       }
     }
