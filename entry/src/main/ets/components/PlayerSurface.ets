@@ -17,7 +17,7 @@ import { DeleteSongDialog } from './playerSurface/DeleteSongDialog'
 import { ApiSettingsDialog } from './playerSurface/ApiSettingsDialog'
 
 @Component
-struct SurfaceMiniPlayer {
+export struct SurfaceMiniPlayer {
   @StorageLink('isPlaying') isPlaying: boolean = false
   @StorageLink('currentIndex') currentIndex: number = -1
   @StorageLink('currentTitle') currentTitle: string = ''
@@ -36,6 +36,9 @@ struct SurfaceMiniPlayer {
   @Prop interactive: boolean = true
   @Prop dockBottomOffset: number = 0
   @Prop coverGeometryId: string = ''
+  @Prop embeddedInHdsMaterial: boolean = false
+  @Prop compactMode: boolean = false
+  @Prop animating: boolean = false
 
   onOpen?: () => void
 
@@ -113,6 +116,18 @@ struct SurfaceMiniPlayer {
     return this.currentIndex >= 0 && this.currentTitle.length > 0
   }
 
+  private getMiniHeight(): number {
+    return this.embeddedInHdsMaterial ? 66 : 64
+  }
+
+  private isExpandedContentInteractive(): boolean {
+    return this.visible && this.interactive && !this.compactMode && !this.animating && this.opacityValue > 0.05
+  }
+
+  private isContainerInteractive(): boolean {
+    return this.visible && this.interactive && this.opacityValue > 0.05 && !this.compactMode && !this.animating
+  }
+
   @Builder
   private CoverThumbBody() {
     if (this.coverPixelMap) {
@@ -147,6 +162,7 @@ struct SurfaceMiniPlayer {
       .clip(true)
       .geometryTransition(this.coverGeometryId)
       .transition(TransitionEffect.OPACITY)
+      .flexShrink(0)
     } else {
       Stack() {
         this.CoverThumbBody()
@@ -155,103 +171,131 @@ struct SurfaceMiniPlayer {
       .height(44)
       .borderRadius(14)
       .clip(true)
+      .flexShrink(0)
     }
+  }
+
+  @Builder
+  private MiniPlayerContent() {
+    Stack({ alignContent: Alignment.Start }) {
+      Row() {
+        Row() {
+          this.CoverThumb()
+
+          Column({ space: 2 }) {
+            Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            Text(this.currentArtist)
+              .fontSize(11)
+              .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+              .opacity(0.72)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .margin({ left: 10, right: 10 })
+        }
+        .layoutWeight(1)
+        .height('100%')
+        .alignItems(VerticalAlign.Center)
+        .hitTestBehavior(this.isExpandedContentInteractive() ? HitTestMode.Default : HitTestMode.None)
+        .onClick(() => {
+          if (this.isExpandedContentInteractive() && this.canOpen() && this.onOpen) {
+            this.onOpen()
+          }
+        })
+
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+        }
+        .width(34)
+        .height(34)
+        .backgroundColor(this.getMiniAccentBackground())
+        .flexShrink(0)
+        .hitTestBehavior(this.isExpandedContentInteractive() ? HitTestMode.Default : HitTestMode.None)
+        .onClick(() => {
+          if (this.isExpandedContentInteractive()) {
+            PlayerService.getInstance().togglePlayPause()
+          }
+        })
+
+        Button({ type: ButtonType.Circle, stateEffect: true }) {
+          SymbolGlyph($r('sys.symbol.forward_end_fill'))
+            .fontSize(18)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+        }
+        .width(34)
+        .height(34)
+        .margin({ left: 8 })
+        .backgroundColor(this.getMiniNeutralButtonBackground())
+        .flexShrink(0)
+        .hitTestBehavior(this.isExpandedContentInteractive() ? HitTestMode.Default : HitTestMode.None)
+        .onClick(() => {
+          if (this.isExpandedContentInteractive()) {
+            PlayerService.getInstance().next()
+          }
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .constraintSize({ minWidth: 240 })
+      .padding({ left: 11, right: 10 })
+    }
+    .width('100%')
+    .height(this.getMiniHeight())
+    .clip(true)
   }
 
   build() {
-    Row() {
-      Row() {
-        this.CoverThumb()
-
-        Column({ space: 2 }) {
-          Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-          Text(this.currentArtist)
-            .fontSize(11)
-            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            .opacity(0.72)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .layoutWeight(1)
-        .margin({ left: 10, right: 10 })
+    if (this.embeddedInHdsMaterial) {
+      Stack() {
+        this.MiniPlayerContent()
       }
-      .layoutWeight(1)
-      .height('100%')
-      .alignItems(VerticalAlign.Center)
-      .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
-      .onClick(() => {
-        if (this.visible && this.interactive && this.opacityValue > 0.05 && this.canOpen() && this.onOpen) {
-          this.onOpen()
-        }
-      })
-
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-          .fontSize(18)
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
+        .width('100%')
+        .height(this.getMiniHeight())
+        .backgroundColor(Color.Transparent)
+        .opacity(this.visible ? this.opacityValue : 0)
+        .hitTestBehavior(this.isContainerInteractive() ? HitTestMode.Default : HitTestMode.None)
+    } else {
+      Stack() {
+        this.MiniPlayerContent()
       }
-      .width(34)
-      .height(34)
-      .backgroundColor(this.getMiniAccentBackground())
-      .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
-      .onClick(() => {
-        if (this.visible && this.interactive && this.opacityValue > 0.05) {
-          PlayerService.getInstance().togglePlayPause()
-        }
-      })
-
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph($r('sys.symbol.forward_end_fill'))
-          .fontSize(18)
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-      }
-      .width(34)
-      .height(34)
-      .margin({ left: 8 })
-      .backgroundColor(this.getMiniNeutralButtonBackground())
-      .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
-      .onClick(() => {
-        if (this.visible && this.interactive && this.opacityValue > 0.05) {
-          PlayerService.getInstance().next()
-        }
-      })
+        .width('100%')
+        .height(this.getMiniHeight())
+        .margin({
+          left: 18,
+          right: 18,
+          bottom: this.bottomSafeHeight + 20 + this.dockBottomOffset
+        })
+        .borderRadius(30)
+        .backgroundColor(this.getMiniMaterialBackground())
+        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, { colorMode: ThemeColorMode.SYSTEM })
+        .linearGradient({
+          angle: 90,
+          colors: [
+            [this.getMiniBackgroundStart(), 0.0],
+            [this.getMiniBackgroundMiddle(), 0.48],
+            [this.getMiniBackgroundEnd(), 1.0]
+          ]
+        })
+        .border({
+          width: 0.5,
+          color: this.getMiniMaterialBorderColor()
+        })
+        .clip(true)
+        .shadow(ShadowStyle.OUTER_FLOATING_SM)
+        .opacity(this.visible ? this.opacityValue : 0)
+        .hitTestBehavior(this.isContainerInteractive() ? HitTestMode.Default : HitTestMode.None)
     }
-    .height(64)
-    .padding({ left: 12, right: 10 })
-    .margin({
-      left: 18,
-      right: 18,
-      bottom: this.bottomSafeHeight + 20 + this.dockBottomOffset
-    })
-    .borderRadius(30)
-    .backgroundColor(this.getMiniMaterialBackground())
-    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, { colorMode: ThemeColorMode.SYSTEM })
-    .linearGradient({
-      angle: 90,
-      colors: [
-        [this.getMiniBackgroundStart(), 0.0],
-        [this.getMiniBackgroundMiddle(), 0.48],
-        [this.getMiniBackgroundEnd(), 1.0]
-      ]
-    })
-    .border({
-      width: 0.5,
-      color: this.getMiniMaterialBorderColor()
-    })
-    .clip(true)
-    .shadow(ShadowStyle.OUTER_FLOATING_SM)
-    .opacity(this.visible ? this.opacityValue : 0)
-    .hitTestBehavior(this.visible && this.interactive && this.opacityValue > 0.05 ? HitTestMode.Default : HitTestMode.None)
   }
 }
-
-
 @Component
 struct PlayerProgressStrip {
   @StorageLink('currentPosition') currentPosition: number = 0
@@ -292,6 +336,19 @@ struct PlayerProgressStrip {
     this.isSeeking = false
   }
 
+  private readonly handleSliderChange: (value: number, mode: SliderChangeMode) => void =
+    (value: number, mode: SliderChangeMode): void => {
+      if (!this.interactive) {
+        return
+      }
+      if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+        this.isSeeking = true
+        this.seekValue = value
+      } else if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+        this.commitSeek(value)
+      }
+    }
+
   build() {
     Row({ space: 8 }) {
       Text(formatMs(this.getDisplayPosition()))
@@ -316,17 +373,7 @@ struct PlayerProgressStrip {
         .blockSize({ width: this.blockSizeValue, height: this.blockSizeValue })
         .trackThickness(this.trackThickness)
         .hitTestBehavior(this.interactive ? HitTestMode.Default : HitTestMode.None)
-        .onChange((value: number, mode: SliderChangeMode) => {
-          if (!this.interactive) {
-            return
-          }
-          if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
-            this.isSeeking = true
-            this.seekValue = value
-          } else if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-            this.commitSeek(value)
-          }
-        })
+        .onChange(this.handleSliderChange)
 
       Text(formatMs(this.totalDuration))
         .width(this.timeWidth)

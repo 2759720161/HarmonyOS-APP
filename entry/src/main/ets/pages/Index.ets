@@ -1,7 +1,7 @@
 import { Colors, StorageKeys } from '../common/Constants'
 import { SongListView } from '../components/SongListView'
 import { FavoriteView } from '../components/FavoriteView'
-import { PlayerSurface } from '../components/PlayerSurface'
+import { PlayerSurface, SurfaceMiniPlayer } from '../components/PlayerSurface'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
 import { image } from '@kit.ImageKit'
 import { PlayerService } from '../service/PlayerService'
@@ -12,8 +12,11 @@ import { CoverThemeService, CoverPageTheme } from '../service/CoverThemeService'
 import { curves } from '@kit.ArkUI'
 import {
   HdsNavigation,
+  HdsBarStyle,
   HdsTabs,
+  HdsTabsBarChangeMode,
   HdsTabsController,
+  HdsTabsFloatingStyle,
   SystemMaterialParams,
   hdsMaterial
 } from '@kit.UIDesignKit'
@@ -44,16 +47,26 @@ struct Index {
   @State private loadingStatus: string = ''
   @State private loadingProgress: string = ''
   @State private lyricsProgress: number = 0
+  @State private hdsMiniBarCompactContent: boolean = false
+  @State private hdsMiniBarAnimating: boolean = false
   @State private immersiveMaterialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE
 
   private readonly playerOpenDuration: number = 520
   private readonly playerCloseDuration: number = 430
   private readonly tabSwitchDuration: number = 250
   private readonly hdsTabBarHeight: number = 66
-  private readonly hdsTabDockOffset: number = 78
+  private readonly hdsTabBottomMargin: number = 24
+  private readonly hdsMiniBarSmallWidth: number = 240
+  private readonly hdsMiniBarMediumWidth: number = 260
+  private readonly hdsMiniBarLargeWidth: number = 320
+  private readonly hdsMiniBarClickGuardDuration: number = 760
   private readonly dragThreshold: number = 300
   private playerHideTask: number = -1
   private playerOpenTask: number = -1
+  private hdsMiniBarGuardTask: number = -1
+  private hdsMiniBarStateTask: number = -1
+  private hdsMiniBarGuardUntil: number = 0
+  private pendingHdsMiniBarCollapsed: boolean = false
   private coverThemeTaskToken: number = 0
   private tabsController: HdsTabsController = new HdsTabsController()
   private readonly coverThemeService: CoverThemeService = CoverThemeService.getInstance()
@@ -74,6 +87,8 @@ struct Index {
   aboutToDisappear(): void {
     this.clearPlayerHideTask()
     this.clearPlayerOpenTask()
+    this.clearHdsMiniBarGuardTask()
+    this.clearHdsMiniBarStateTask()
   }
 
   private async initCoverThemeService(): Promise<void> {
@@ -179,6 +194,20 @@ struct Index {
     }
   }
 
+  private clearHdsMiniBarGuardTask(): void {
+    if (this.hdsMiniBarGuardTask >= 0) {
+      clearTimeout(this.hdsMiniBarGuardTask)
+      this.hdsMiniBarGuardTask = -1
+    }
+  }
+
+  private clearHdsMiniBarStateTask(): void {
+    if (this.hdsMiniBarStateTask >= 0) {
+      clearTimeout(this.hdsMiniBarStateTask)
+      this.hdsMiniBarStateTask = -1
+    }
+  }
+
   private canOpenNowPlaying(): boolean {
     return this.currentIndex >= 0 && this.currentTitle.length > 0
   }
@@ -221,12 +250,11 @@ struct Index {
   }
 
   private getMiniDockBottomOffset(): number {
-    // 播放器展开/收回期间，mini 的最终 dock 位置必须保持和打开前一致。
-    // 否则关闭尾帧会先出现在底部 tab 区域，再跳/飞回原位置。
+    // Keep the transition mini aligned with the HDS miniBar start position.
     if (this.playerMounted) {
       return this.playerDockBottomOffset
     }
-    return this.shouldReserveHdsTabSpace() ? this.hdsTabDockOffset : 0
+    return Math.max(0, this.hdsTabBottomMargin - 20)
   }
 
   private getPageContentScale(): number {
@@ -258,6 +286,10 @@ struct Index {
 
   private openNowPlaying(): void {
     if (!this.canOpenNowPlaying()) {
+      return
+    }
+
+    if (this.hdsMiniBarCompactContent || this.hdsMiniBarAnimating || this.isHdsMiniBarClickGuardActive()) {
       return
     }
 
@@ -379,6 +411,113 @@ struct Index {
     }
   }
 
+  private shouldShowHdsMiniBar(): boolean {
+    return this.canOpenNowPlaying() && !this.shouldUseFullPlayerLayer()
+  }
+
+  private updateHdsMiniBarStyle(style: HdsBarStyle): void {
+    this.deferHdsMiniBarState(style, true)
+  }
+
+  private onHdsMiniBarAnimationStart(style: HdsBarStyle): void {
+    this.deferHdsMiniBarState(style, true)
+  }
+
+  private onHdsMiniBarAnimationEnd(style: HdsBarStyle): void {
+    this.deferHdsMiniBarState(style, false)
+  }
+
+  private isHdsMiniBarClickGuardActive(): boolean {
+    return Date.now() < this.hdsMiniBarGuardUntil
+  }
+
+  private extendHdsMiniBarClickGuard(): void {
+    this.hdsMiniBarGuardUntil = Date.now() + this.hdsMiniBarClickGuardDuration
+    this.clearHdsMiniBarGuardTask()
+    this.hdsMiniBarGuardTask = setTimeout(() => {
+      this.hdsMiniBarGuardTask = -1
+      if (!this.isHdsMiniBarClickGuardActive()) {
+        this.hdsMiniBarAnimating = false
+      }
+    }, this.hdsMiniBarClickGuardDuration) as number
+  }
+
+  private deferHdsMiniBarState(style: HdsBarStyle, guardClick: boolean): void {
+    this.pendingHdsMiniBarCollapsed = style === HdsBarStyle.COLLAPSE
+    if (guardClick) {
+      this.extendHdsMiniBarClickGuard()
+    }
+
+    if (this.hdsMiniBarStateTask >= 0) {
+      return
+    }
+
+    this.hdsMiniBarStateTask = setTimeout(() => {
+      this.hdsMiniBarStateTask = -1
+      this.hdsMiniBarCompactContent = this.pendingHdsMiniBarCollapsed
+      this.hdsMiniBarAnimating = this.isHdsMiniBarClickGuardActive()
+    }, 0) as number
+  }
+
+  private buildHdsTabFloatingStyle(): HdsTabsFloatingStyle {
+    const floatingStyle: HdsTabsFloatingStyle = {
+      barSideMargin: 18,
+      barBottomMargin: this.bottomSafeHeight + this.hdsTabBottomMargin,
+      thermoCtrl: true,
+      systemMaterialEffect: this.buildAdaptiveMaterialEffect()
+    }
+
+    if (this.shouldShowHdsMiniBar()) {
+      floatingStyle.miniBar = {
+        miniBarBuilder: () => {
+          this.HdsMiniPlayerBarBuilder()
+        },
+        miniBarWidth: {
+          smallWidth: this.hdsMiniBarSmallWidth,
+          mediumWidth: this.hdsMiniBarMediumWidth,
+          largeWidth: this.hdsMiniBarLargeWidth
+        },
+        enableMiniBarBackground: true,
+        enableMiniBarClip: true,
+        onBarStyleChange: (
+          miniBarStyle: HdsBarStyle,
+          _tabBarStyle: HdsBarStyle,
+          _miniBarWidth: number,
+          _tabBarWidth: number,
+          _mode: HdsTabsBarChangeMode
+        ) => {
+          this.updateHdsMiniBarStyle(miniBarStyle)
+        },
+        onMiniBarAnimationStart: (style: HdsBarStyle, _width: number) => {
+          this.onHdsMiniBarAnimationStart(style)
+        },
+        onMiniBarAnimationEnd: (style: HdsBarStyle) => {
+          this.onHdsMiniBarAnimationEnd(style)
+        }
+      }
+    }
+
+    return floatingStyle
+  }
+
+  @Builder
+  private HdsMiniPlayerBarBuilder() {
+    SurfaceMiniPlayer({
+      visible: this.canOpenNowPlaying(),
+      opacityValue: this.shouldShowHdsMiniBar() ? 1 : 0,
+      interactive: this.shouldShowHdsMiniBar(),
+      dockBottomOffset: 0,
+      embeddedInHdsMaterial: true,
+      compactMode: this.hdsMiniBarCompactContent,
+      animating: this.hdsMiniBarAnimating,
+      coverGeometryId: this.shouldShowHdsMiniBar() ? 'player_cover_image' : '',
+      onOpen: () => {
+        this.openNowPlaying()
+      }
+    })
+      .height(this.hdsTabBarHeight)
+  }
+
   @Builder
   private customTabBar(tabIndex: number, icon: Resource, text: string): void {
     Column({ space: 3 }) {
@@ -464,12 +603,7 @@ struct Index {
         .animationDuration(240)
         .barHeight(this.hdsTabBarHeight)
         .barOverlap(true)
-        .barFloatingStyle({
-          barSideMargin: 18,
-          barBottomMargin: this.bottomSafeHeight + 24,
-          thermoCtrl: true,
-          systemMaterialEffect: this.buildAdaptiveMaterialEffect()
-        })
+        .barFloatingStyle(this.buildHdsTabFloatingStyle())
         .onChange((index: number) => {
           this.currentTab = index
         })
@@ -492,7 +626,7 @@ struct Index {
   }
 
   private shouldMountPlayerLayer(): boolean {
-    return this.shouldUseFullPlayerLayer() || this.canOpenNowPlaying()
+    return this.shouldUseFullPlayerLayer()
   }
 
   private getMiniPlayerLayerHeight(): number {
