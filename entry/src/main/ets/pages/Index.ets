@@ -49,8 +49,6 @@ struct Index {
   @State private hdsMiniBarAnimating: boolean = false
   @State private immersiveMaterialLevel: hdsMaterial.MaterialLevel = hdsMaterial.MaterialLevel.ADAPTIVE
 
-  private readonly playerOpenDuration: number = 520
-  private readonly playerCloseDuration: number = 430
   private readonly tabSwitchDuration: number = 250
   private readonly hdsTabBarHeight: number = 66
   private readonly hdsTabBottomMargin: number = 24
@@ -221,8 +219,7 @@ struct Index {
 
     this.lyricsProgress = 0
     animateTo({
-      duration: this.playerOpenDuration,
-      curve: curves.springMotion()
+      curve: curves.springMotion(0.4, 0.8)
     }, () => {
       this.isPlayerExpanded = true
     })
@@ -235,8 +232,7 @@ struct Index {
 
     this.lyricsProgress = 0
     animateTo({
-      duration: this.playerCloseDuration,
-      curve: curves.springMotion()
+      curve: curves.springMotion(0.4, 0.85)
     }, () => {
       this.isPlayerExpanded = false
     })
@@ -542,7 +538,11 @@ struct Index {
         .width('100%')
         .height('100%')
         .hitTestBehavior(HitTestMode.Default)
-        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
+        .transition(
+          TransitionEffect.translate({ y: '100%' })
+            .combine(TransitionEffect.OPACITY)
+            .animation({ curve: curves.springMotion(0.4, 0.8) })
+        )
         .zIndex(30)
       }
     }

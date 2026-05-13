@@ -1,4 +1,5 @@
 import { image } from '@kit.ImageKit'
+import { curves } from '@kit.ArkUI'
 import promptAction from '@ohos.promptAction'
 import { Colors, PlayMode, formatMs, StorageKeys } from '../common/Constants'
 import { GlobalContext, GCKeys } from '../common/GlobalContext'
@@ -891,12 +892,18 @@ struct SurfaceNowPlayingView {
   onClose?: () => void
   onLyricsProgress?: (progress: number) => void
 
+  @State private dragOffsetY: number = 0
+
   private shouldBuildActiveContent(): boolean {
     return this.activeContent
   }
 
   private canUsePlaybackControls(): boolean {
     return !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
+  }
+
+  private canUseCloseGesture(): boolean {
+    return this.activeContent && !this.hasLocalOverlayVisible() && !this.isImmersiveModeShowing()
   }
 
   private hasLocalOverlayVisible(): boolean {
@@ -1071,6 +1078,7 @@ struct SurfaceNowPlayingView {
   private apiSettingsLoaded: boolean = false
 
   aboutToAppear(): void {
+    this.dragOffsetY = 0
     this.setSharedMorphHidden(false)
     this.setModalOverlayActive(false)
     this.setImmersiveModeState(false, 0)
@@ -1079,6 +1087,7 @@ struct SurfaceNowPlayingView {
   }
 
   aboutToDisappear(): void {
+    this.dragOffsetY = 0
     this.clearImmersiveModeHideTask()
     this.closeDialogControllers()
     this.isMoreSheetVisible = false
@@ -1118,6 +1127,35 @@ struct SurfaceNowPlayingView {
     if (this.onLyricsProgress) {
       this.onLyricsProgress(Math.max(0, Math.min(1, progress)))
     }
+  }
+
+  private updateCloseGestureOffset(offsetY: number): void {
+    if (!this.canUseCloseGesture()) {
+      return
+    }
+    this.dragOffsetY = Math.min(Math.max(0, offsetY), this.getOverlayScreenHeight())
+  }
+
+  private endCloseGesture(velocityY: number): void {
+    if (!this.canUseCloseGesture()) {
+      this.dragOffsetY = 0
+      return
+    }
+
+    const shouldClose: boolean = this.dragOffsetY > 120 || velocityY > 600
+    if (shouldClose) {
+      if (this.onClose) {
+        this.onClose()
+      }
+      setTimeout(() => {
+        this.dragOffsetY = 0
+      }, 50)
+      return
+    }
+
+    animateTo({ curve: curves.springMotion(0.3, 0.7) }, () => {
+      this.dragOffsetY = 0
+    })
   }
 
   private clearImmersiveModeHideTask(): void {
@@ -1897,6 +1935,16 @@ struct SurfaceNowPlayingView {
     .height('100%')
     .backgroundColor(Color.Transparent)
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .translate({ y: this.dragOffsetY })
+    .gesture(
+      PanGesture({ direction: PanDirection.Down, distance: 10 })
+        .onActionUpdate((event: GestureEvent) => {
+          this.updateCloseGestureOffset(event.offsetY)
+        })
+        .onActionEnd((event: GestureEvent) => {
+          this.endCloseGesture(event.velocityY)
+        })
+    )
   }
 }
 
