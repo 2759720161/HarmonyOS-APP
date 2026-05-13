@@ -798,7 +798,7 @@ struct NowPlayingPanel {
   }
 
   private shouldBuildChromeContent(): boolean {
-    return this.contentOpacity > 0.001 || this.getContentProgress() > 0.001
+    return true
   }
 
   private getCoverCornerRadius(): number {
@@ -820,16 +820,6 @@ struct NowPlayingPanel {
       })
 
       if (this.shouldBuildChromeContent()) {
-        NowPlayingSongInfoSection({
-          widthValue: this.titleWidth,
-          left: this.titleLeft,
-          top: this.titleTop,
-          primaryColor: this.primaryColor,
-          secondaryColor: this.secondaryColor,
-          opacityValue: this.contentOpacity
-        })
-          .translate({ y: this.getContentOffset(12) })
-
         NowPlayingProgressSection({
           accentColor: this.accentColor,
           trackColor: this.trackColor,
@@ -1664,10 +1654,16 @@ struct SurfaceNowPlayingView {
   }
 
   private getOverlayTitleTop(): number {
-    const preferredTop = this.getOverlayCoverTargetTop() + this.getOverlayCoverTargetSize() + 20
-    const minTop = this.getOverlayCoverTargetTop() + this.getOverlayCoverTargetSize() + 12
-    const maxTop = this.getProgressSectionTop() - 86
-    return Math.max(minTop, Math.min(preferredTop, maxTop))
+    const topLimit = this.topSafeHeight + this.overlayHeaderTopOffset
+    const coverTop = this.getOverlayCoverTargetTop()
+    const titleHeight = 66
+    const availableSpace = coverTop - topLimit
+
+    if (availableSpace > titleHeight) {
+      return topLimit + (availableSpace - titleHeight) / 2
+    }
+
+    return topLimit
   }
 
   private getOverlayTitleWidth(): number {
@@ -1676,6 +1672,43 @@ struct SurfaceNowPlayingView {
 
   private getOverlayTitleLeft(): number {
     return (this.getOverlayScreenWidth() - this.getOverlayTitleWidth()) / 2
+  }
+
+  @Builder
+  private CoverSongInfoLayer() {
+    Column({ space: 4 }) {
+      Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
+        .width('100%')
+        .height(38)
+        .fontSize(27)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.coverPagePrimaryColor)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text(this.currentArtist.length > 0 ? this.currentArtist : 'Unknown artist')
+        .width('100%')
+        .height(24)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.coverPageSecondaryColor)
+        .textAlign(TextAlign.Center)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width(this.getOverlayTitleWidth())
+    .height(66)
+    .position({
+      x: this.getOverlayTitleLeft(),
+      y: this.getOverlayTitleTop()
+    })
+    .opacity(this.getActiveContentOpacity())
+    .translate({
+      y: 12 * (1 - this.getActiveContentProgress())
+    })
+    .zIndex(90)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   private getProgressSectionTop(): number {
@@ -1838,35 +1871,45 @@ struct SurfaceNowPlayingView {
 
   @Builder
   private CoverPageContent() {
-    NowPlayingPanel({
-      screenWidth: this.getOverlayScreenWidth(),
-      screenHeight: this.getOverlayScreenHeight(),
-      coverSize: this.getOverlayCoverTargetSize(),
-      coverLeft: this.getOverlayCoverTargetLeft(),
-      coverTop: this.getOverlayCoverTargetTop(),
-      titleWidth: this.getOverlayTitleWidth(),
-      titleLeft: this.getOverlayTitleLeft(),
-      titleTop: this.getOverlayTitleTop(),
-      bottomSafeHeight: this.bottomSafeHeight,
-      primaryColor: this.coverPagePrimaryColor,
-      secondaryColor: this.coverPageSecondaryColor,
-      accentColor: this.dominantColor,
-      trackColor: 'rgba(0, 0, 0, 0.13)',
-      shadowColor: this.getCoverShadowColor(),
-      contentOpacity: this.getActiveContentOpacity(),
-      contentProgress: this.getActiveContentProgress(),
-      coverProgress: this.backgroundProgress,
-      coverOpacity: Math.max(0.001, this.backgroundProgress),
-      controlsInteractive: this.canUsePlaybackControls(),
-      coverGeometryId: this.coverGeometryId,
-      onMoreClick: () => {
-        this.openMoreSheet()
-      },
-      onPlaylistClick: () => {
-        this.openPlaylistDialog()
-      }
-    })
-      .zIndex(20)
+    Stack() {
+      NowPlayingPanel({
+        screenWidth: this.getOverlayScreenWidth(),
+        screenHeight: this.getOverlayScreenHeight(),
+        coverSize: this.getOverlayCoverTargetSize(),
+        coverLeft: this.getOverlayCoverTargetLeft(),
+        coverTop: this.getOverlayCoverTargetTop(),
+        titleWidth: this.getOverlayTitleWidth(),
+        titleLeft: this.getOverlayTitleLeft(),
+        titleTop: this.getOverlayTitleTop(),
+        bottomSafeHeight: this.bottomSafeHeight,
+        primaryColor: this.coverPagePrimaryColor,
+        secondaryColor: this.coverPageSecondaryColor,
+        accentColor: this.dominantColor,
+        trackColor: 'rgba(0, 0, 0, 0.13)',
+        shadowColor: this.getCoverShadowColor(),
+        contentOpacity: this.getActiveContentOpacity(),
+        contentProgress: this.getActiveContentProgress(),
+        coverProgress: this.backgroundProgress,
+        coverOpacity: Math.max(0.001, this.backgroundProgress),
+        controlsInteractive: this.canUsePlaybackControls(),
+        coverGeometryId: this.coverGeometryId,
+        onMoreClick: () => {
+          this.openMoreSheet()
+        },
+        onPlaylistClick: () => {
+          this.openPlaylistDialog()
+        }
+      })
+        .width('100%')
+        .height('100%')
+        .zIndex(20)
+
+      this.CoverSongInfoLayer()
+    }
+    .width('100%')
+    .height('100%')
+    .clip(false)
+    .zIndex(20)
   }
 
   @Builder

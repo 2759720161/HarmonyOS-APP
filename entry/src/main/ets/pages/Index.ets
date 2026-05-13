@@ -628,7 +628,7 @@ struct Index {
   private PlayerContainer() {
     PlayerSurface({
       surfaceActive: this.playerLayerMounted,
-      activeContent: this.playerLayerMounted && this.playerContentProgress > 0.001,
+      activeContent: this.playerLayerMounted,
       coverGeometryId: this.coverGeometryTransitionId,
       contentProgress: this.playerContentProgress,
       backgroundProgress: this.playerBackgroundProgress,
