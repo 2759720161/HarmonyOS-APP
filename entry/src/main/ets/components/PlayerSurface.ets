@@ -161,7 +161,7 @@ export struct SurfaceMiniPlayer {
       .borderRadius(14)
       .clip(true)
       .geometryTransition(this.coverGeometryId)
-      .transition(TransitionEffect.OPACITY)
+      .transition(TransitionEffect.IDENTITY)
       .flexShrink(0)
     } else {
       Stack() {
@@ -398,6 +398,7 @@ struct NowPlayingCoverSection {
   @Prop top: number = 0
   @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @Prop opacityValue: number = 1
+  @Prop coverGeometryId: string = ''
 
   @State private coverPixelMap: image.PixelMap | null = null
 
@@ -410,42 +411,47 @@ struct NowPlayingCoverSection {
     this.coverPixelMap = pm ? pm as image.PixelMap : null
   }
 
-  build() {
+  @Builder
+  private CoverBody() {
     if (this.coverPixelMap) {
       Image(this.coverPixelMap)
-        .width(this.sizeValue)
-        .height(this.sizeValue)
-        .borderRadius(this.sizeValue * 0.12)
+        .width('100%')
+        .height('100%')
         .objectFit(ImageFit.Cover)
-        .shadow({
-          radius: 36,
-          color: this.shadowColor,
-          offsetX: 0,
-          offsetY: 0
-        })
-        .position({ x: this.left, y: this.top })
-        .opacity(this.opacityValue)
+        .draggable(false)
     } else {
       Column() {
         SymbolGlyph($r('sys.symbol.music'))
           .fontSize(this.sizeValue * 0.22)
           .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
       }
-      .width(this.sizeValue)
-      .height(this.sizeValue)
-      .borderRadius(this.sizeValue * 0.12)
+      .width('100%')
+      .height('100%')
       .backgroundColor('rgba(255, 255, 255, 0.58)')
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .shadow({
-        radius: 36,
-        color: this.shadowColor,
-        offsetX: 0,
-        offsetY: 0
-      })
-      .position({ x: this.left, y: this.top })
-      .opacity(this.opacityValue)
     }
+  }
+
+  build() {
+    Stack() {
+      this.CoverBody()
+    }
+    .width(this.sizeValue)
+    .height(this.sizeValue)
+    .borderRadius(this.sizeValue * 0.12)
+    .clip(true)
+    .shadow({
+      radius: 36,
+      color: this.shadowColor,
+      offsetX: 0,
+      offsetY: 0
+    })
+    .position({ x: this.left, y: this.top })
+    .opacity(this.opacityValue)
+    .renderGroup(true)
+    .geometryTransition(this.coverGeometryId)
+    .transition(TransitionEffect.IDENTITY)
   }
 }
 
@@ -697,6 +703,7 @@ struct NowPlayingPanel {
   @Prop shadowColor: string = 'rgba(0, 0, 0, 0.16)'
   @Prop contentOpacity: number = 1
   @Prop controlsInteractive: boolean = true
+  @Prop coverGeometryId: string = ''
 
   onMoreClick?: () => void
   onPlaylistClick?: () => void
@@ -789,7 +796,8 @@ struct NowPlayingPanel {
         left: this.coverLeft,
         top: this.coverTop,
         shadowColor: this.shadowColor,
-        opacityValue: 1
+        opacityValue: 1,
+        coverGeometryId: this.coverGeometryId
       })
 
       NowPlayingProgressSection({
@@ -861,493 +869,6 @@ struct NowPlayingPanel {
 
 
 @Component
-struct SurfacePlayerMorphHost {
-  @StorageLink('isPlaying') isPlaying: boolean = false
-  @StorageLink('currentTitle') currentTitle: string = ''
-  @StorageLink('currentArtist') currentArtist: string = ''
-  @StorageLink('bottomSafeHeight') bottomSafeHeight: number = 0
-  @StorageLink('topSafeHeight') topSafeHeight: number = 0
-  @StorageLink('screenWidthVp') screenWidthVp: number = 0
-  @StorageLink('screenHeightVp') screenHeightVp: number = 0
-  @StorageLink('coverVersion') @Watch('syncCover') coverVersion: number = 0
-  @StorageLink('dominantColor') dominantColor: string = Colors.DEFAULT_DOMINANT_COLOR
-  @StorageLink('coverBackdropBaseColor') coverBackdropBaseColor: string = '#F8FAFB'
-  @StorageLink('coverBackdropTopColor') coverBackdropTopColor: string = '#E8F1F2'
-  @StorageLink('coverBackdropMiddleColor') coverBackdropMiddleColor: string = '#EDF2F0'
-  @StorageLink('coverBackdropBottomColor') coverBackdropBottomColor: string = '#D8E2E3'
-  @StorageLink('coverBackdropGlowColor') coverBackdropGlowColor: string = 'rgba(220, 238, 240, 1)'
-  @StorageLink('coverBackdropAccentGlowColor') coverBackdropAccentGlowColor: string = 'rgba(238, 228, 214, 1)'
-  @StorageLink('coverThemeShadowColor') coverThemeShadowColor: string = 'rgba(0, 0, 0, 0.16)'
-  @StorageLink('coverThemeAccentColor') coverThemeAccentColor: string = Colors.DEFAULT_DOMINANT_COLOR
-  @StorageLink('isDarkMode') isDarkMode: boolean = false
-
-  @Prop progress: number = 0
-  @Prop visible: boolean = true
-  @Prop layerOpacity: number = 1
-  @Prop dockBottomOffset: number = 0
-  @Prop lyricsProgress: number = 0
-  @Prop contentLayerProgress: number = 0
-  @Prop coverGeometryId: string = ''
-
-  onClose?: () => void
-
-  @State private coverPixelMap: image.PixelMap | null = null
-
-  private readonly miniLeft: number = 18
-  private readonly miniRight: number = 18
-  private readonly miniHeight: number = 64
-  private readonly miniBottomGap: number = 20
-  private readonly miniRadius: number = 30
-  private readonly miniCoverSize: number = 44
-  private readonly fullCoverMaxSize: number = 360
-  private readonly fullCoverSizeRatio: number = 0.72
-
-  aboutToAppear(): void {
-    this.syncCover()
-  }
-
-  private syncCover(): void {
-    const pixelMap = GlobalContext.getInstance().get(GCKeys.CURRENT_COVER)
-    this.coverPixelMap = pixelMap ? pixelMap as image.PixelMap : null
-  }
-
-  private clamp01(value: number): number {
-    return Math.max(0, Math.min(1, value))
-  }
-
-  private smooth(value: number): number {
-    const t = this.clamp01(value)
-    return t * t * (3 - 2 * t)
-  }
-
-  private lerp(a: number, b: number, t: number): number {
-    return a + (b - a) * t
-  }
-
-  private getT(): number {
-    // 空间形变略早于 full 内容层完成，避免 full 封面页出现后共享封面仍在移动。
-    return this.smooth(Math.max(0, Math.min(1, this.progress / 0.90)))
-  }
-
-  private getScreenW(): number {
-    return this.screenWidthVp > 0 ? this.screenWidthVp : 360
-  }
-
-  private getScreenH(): number {
-    return this.screenHeightVp > 0 ? this.screenHeightVp : 800
-  }
-
-  private getCardWidth(): number {
-    const miniWidth = this.getScreenW() - this.miniLeft - this.miniRight
-    return this.lerp(miniWidth, this.getScreenW(), this.getT())
-  }
-
-  private getCardHeight(): number {
-    return this.lerp(this.miniHeight, this.getScreenH(), this.getT())
-  }
-
-  private getCardX(): number {
-    return this.lerp(this.miniLeft, 0, this.getT())
-  }
-
-  private getMiniCardY(): number {
-    return this.getScreenH() - this.bottomSafeHeight - this.dockBottomOffset - this.miniBottomGap - this.miniHeight
-  }
-
-  private getCardY(): number {
-    return this.lerp(this.getMiniCardY(), 0, this.getT())
-  }
-
-  private getCardRadius(): number {
-    return this.lerp(this.miniRadius, 0, this.getT())
-  }
-
-  private getCoverSize(): number {
-    const fullSize = Math.min(this.getScreenW() * this.fullCoverSizeRatio, this.fullCoverMaxSize)
-    return this.lerp(this.miniCoverSize, fullSize, this.getT())
-  }
-
-  private getCoverX(): number {
-    const miniX = 12
-    const fullX = (this.getCardWidth() - this.getCoverSize()) / 2
-    return this.lerp(miniX, fullX, this.getT())
-  }
-
-  private getCoverY(): number {
-    const miniY = 10
-    const fullY = this.topSafeHeight + 196
-    return this.lerp(miniY, fullY, this.getT())
-  }
-
-  private getTitleX(): number {
-    return this.lerp(66, 32, this.getT())
-  }
-
-  private getTitleY(): number {
-    return this.lerp(14, this.topSafeHeight + 76, this.getT())
-  }
-
-  private getTitleWidth(): number {
-    return this.lerp(this.getCardWidth() - 150, this.getCardWidth() - 64, this.getT())
-  }
-
-  private getTitleFontSize(): number {
-    return this.lerp(14, 24, this.getT())
-  }
-
-  private getArtistFontSize(): number {
-    return this.lerp(11, 13, this.getT())
-  }
-
-  private getMiniButtonsOpacity(): number {
-    return 1 - this.smooth(this.progress / 0.22)
-  }
-
-  private getFullControlsOpacity(): number {
-    const fadeIn = this.smooth((this.progress - 0.52) / 0.34)
-    const fadeOutForContentLayer = 1 - this.smooth((this.progress - 0.90) / 0.08)
-    return fadeIn * fadeOutForContentLayer
-  }
-
-  private getCloseOpacity(): number {
-    return this.smooth((this.progress - 0.70) / 0.18)
-  }
-
-  private normalizeAlpha(alpha: number): number {
-    return Math.max(0, Math.min(1, alpha))
-  }
-
-  private withAlpha(color: string, alpha: number): string {
-    const normalizedAlpha = this.normalizeAlpha(alpha)
-    const rgbaMatch: RegExpMatchArray | null = color.match(/rgba?\(([^)]+)\)/)
-    if (rgbaMatch && rgbaMatch[1]) {
-      const channels: string[] = rgbaMatch[1].split(',').map((item: string) => item.trim())
-      if (channels.length >= 3) {
-        return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${normalizedAlpha})`
-      }
-    }
-
-    let hex: string = color.replace('#', '').trim()
-    if (hex.length === 3) {
-      hex = hex.split('').map((item: string) => `${item}${item}`).join('')
-    } else if (hex.length === 8) {
-      hex = hex.substring(2)
-    }
-
-    if (hex.length === 6) {
-      const red: number = Number.parseInt(hex.substring(0, 2), 16)
-      const green: number = Number.parseInt(hex.substring(2, 4), 16)
-      const blue: number = Number.parseInt(hex.substring(4, 6), 16)
-      return `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha})`
-    }
-
-    return `rgba(123, 127, 255, ${normalizedAlpha})`
-  }
-
-  private getAccentColor(alpha: number): string {
-    const accent = this.coverThemeAccentColor.length > 0 ? this.coverThemeAccentColor : this.dominantColor
-    return this.withAlpha(accent, alpha)
-  }
-
-  private getMiniMaterialBackground(): string {
-    return this.isDarkMode ? 'rgba(32, 34, 40, 0.58)' : 'rgba(255, 255, 255, 0.58)'
-  }
-
-  private getMiniMaterialBorderColor(): string {
-    const alpha: number = (this.isDarkMode ? 0.16 : 0.42) * (1 - this.getT())
-    return this.isDarkMode ? `rgba(255, 255, 255, ${alpha})` : `rgba(255, 255, 255, ${alpha})`
-  }
-
-  private getMiniNeutralButtonBackground(): string {
-    return this.isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.30)'
-  }
-
-  private getMorphGradientOpacity(): number {
-    return 0.22 + this.getT() * 0.78
-  }
-
-  private getSharedElementOpacity(): number {
-    return 1 - this.smooth(this.contentLayerProgress)
-  }
-
-  @Builder
-  private CoverBody() {
-    if (this.coverPixelMap) {
-      Image(this.coverPixelMap)
-        .width('100%')
-        .height('100%')
-        .objectFit(ImageFit.Cover)
-        .draggable(false)
-    } else {
-      Column() {
-        SymbolGlyph($r('sys.symbol.music'))
-          .fontSize(this.lerp(20, 108, this.getT()))
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor($r('app.color.mini_player_placeholder'))
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    }
-  }
-
-  @Builder
-  private CoverFrame(withGeometryTransition: boolean) {
-    Stack() {
-      this.CoverBody()
-    }
-    .width(this.getCoverSize())
-    .height(this.getCoverSize())
-    .borderRadius(this.lerp(14, 22, this.getT()))
-    .clip(true)
-    .position({
-      x: this.getCardX() + this.getCoverX(),
-      y: this.getCardY() + this.getCoverY()
-    })
-    .opacity(this.getSharedElementOpacity())
-    .shadow({
-      radius: 24 * this.getT() * this.getSharedElementOpacity(),
-      color: this.coverThemeShadowColor,
-      offsetX: 0,
-      offsetY: 10
-    })
-    .renderGroup(true)
-    .geometryTransition(withGeometryTransition ? this.coverGeometryId : '')
-    .transition(withGeometryTransition ? TransitionEffect.OPACITY : TransitionEffect.IDENTITY)
-  }
-
-  @Builder
-  private Cover() {
-    this.CoverFrame(this.coverGeometryId.length > 0)
-  }
-
-  @Builder
-  private TitleBlock() {
-    Column({ space: 3 }) {
-      Text(this.currentTitle.length > 0 ? this.currentTitle : 'No song playing')
-        .fontSize(this.getTitleFontSize())
-        .fontWeight(this.getT() > 0.55 ? FontWeight.Bold : FontWeight.Medium)
-        .fontColor($r('sys.color.ohos_id_color_text_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(this.progress > 0.5 ? TextAlign.Center : TextAlign.Start)
-
-      Text(this.currentArtist)
-        .fontSize(this.getArtistFontSize())
-        .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-        .opacity(this.lerp(0.70, 0.78, this.getT()))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .textAlign(this.progress > 0.5 ? TextAlign.Center : TextAlign.Start)
-    }
-    .width(this.getTitleWidth())
-    .position({
-      x: this.getCardX() + this.getTitleX(),
-      y: this.getCardY() + this.getTitleY()
-    })
-    .opacity(this.getSharedElementOpacity())
-  }
-
-  @Builder
-  private MiniButtons() {
-    Row({ space: 8 }) {
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-          .fontSize(18)
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-      }
-      .width(34)
-      .height(34)
-      .backgroundColor(this.getAccentColor(0.22))
-      .onClick(() => {
-        PlayerService.getInstance().togglePlayPause()
-      })
-
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph($r('sys.symbol.forward_end_fill'))
-          .fontSize(18)
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-      }
-      .width(34)
-      .height(34)
-      .backgroundColor(this.getMiniNeutralButtonBackground())
-      .onClick(() => {
-        PlayerService.getInstance().next()
-      })
-    }
-    .position({
-      x: this.getCardX() + this.getCardWidth() - 92,
-      y: this.getCardY() + 15
-    })
-    .opacity(this.getMiniButtonsOpacity())
-    .hitTestBehavior(this.contentLayerProgress < 0.05 && this.getMiniButtonsOpacity() > 0.05 ? HitTestMode.Default : HitTestMode.None)
-  }
-
-  @Builder
-  private FullControls() {
-    Column({ space: 18 }) {
-      PlayerProgressStrip({
-        accentColor: this.dominantColor,
-        trackColor: 'rgba(0, 0, 0, 0.16)',
-        interactive: false,
-        timeWidth: 42,
-        rowHeight: 34,
-        trackThickness: 4,
-        blockSizeValue: 10
-      })
-        .width('86%')
-
-      Row({ space: 34 }) {
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          SymbolGlyph($r('sys.symbol.backward_end_fill'))
-            .fontSize(30)
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-        }
-        .width(54)
-        .height(54)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          PlayerService.getInstance().prev()
-        })
-
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          SymbolGlyph(this.isPlaying ? $r('sys.symbol.pause_fill') : $r('sys.symbol.play_fill'))
-            .fontSize(42)
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-        }
-        .width(74)
-        .height(74)
-        .backgroundColor(this.getAccentColor(0.24))
-        .onClick(() => {
-          PlayerService.getInstance().togglePlayPause()
-        })
-
-        Button({ type: ButtonType.Normal, stateEffect: true }) {
-          SymbolGlyph($r('sys.symbol.forward_end_fill'))
-            .fontSize(30)
-            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-        }
-        .width(54)
-        .height(54)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          PlayerService.getInstance().next()
-        })
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-    }
-    .width(this.getScreenW())
-    .position({
-      x: 0,
-      y: this.getScreenH() - this.bottomSafeHeight - 210
-    })
-    .opacity(this.getFullControlsOpacity())
-    .hitTestBehavior(HitTestMode.None)
-  }
-
-  private getCardGlowOpacity(): number {
-    return this.smooth((this.progress - 0.22) / 0.70)
-  }
-
-  @Builder
-  private CardSurface() {
-    Stack() {
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.getMiniMaterialBackground())
-        .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THICK, { colorMode: ThemeColorMode.SYSTEM })
-        .opacity(1 - this.getT())
-
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor(this.coverBackdropBaseColor)
-        .linearGradient({
-          angle: 135,
-          colors: [
-            [this.coverBackdropTopColor, 0.0],
-            [this.coverBackdropMiddleColor, 0.55],
-            [this.coverBackdropBottomColor, 1.0]
-          ]
-        })
-        .opacity(this.getMorphGradientOpacity())
-
-      Ellipse()
-        .width(this.getCardWidth() * 1.12)
-        .height(this.getCardWidth() * 0.72)
-        .fill(this.coverBackdropGlowColor)
-        .opacity(this.getCardGlowOpacity() * 0.16)
-        .blur(56)
-        .offset({ x: -this.getCardWidth() * 0.22, y: -this.getCardHeight() * 0.10 })
-        .hitTestBehavior(HitTestMode.None)
-
-      Ellipse()
-        .width(this.getCardWidth() * 0.92)
-        .height(this.getCardWidth() * 0.66)
-        .fill(this.coverBackdropAccentGlowColor)
-        .opacity(this.getCardGlowOpacity() * 0.12)
-        .blur(62)
-        .offset({ x: this.getCardWidth() * 0.28, y: this.getCardHeight() * 0.18 })
-        .hitTestBehavior(HitTestMode.None)
-    }
-    .width(this.getCardWidth())
-    .height(this.getCardHeight())
-    .position({ x: this.getCardX(), y: this.getCardY() })
-    .borderRadius(this.getCardRadius())
-    .border({
-      width: 0.5,
-      color: this.getMiniMaterialBorderColor()
-    })
-    .clip(true)
-    .shadow({
-      radius: 28 * (1 - this.getT()),
-      color: this.withAlpha(this.coverThemeShadowColor, 0.70),
-      offsetX: 0,
-      offsetY: 8
-    })
-    .renderGroup(true)
-  }
-
-  build() {
-    Stack() {
-      this.CardSurface()
-
-      this.Cover()
-      this.TitleBlock()
-      this.MiniButtons()
-      if (this.progress > 0.48) {
-        this.FullControls()
-      }
-
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        SymbolGlyph($r('sys.symbol.chevron_down'))
-          .fontSize(24)
-          .fontColor([$r('sys.color.ohos_id_color_text_primary')])
-      }
-      .width(44)
-      .height(44)
-      .position({ x: 20, y: this.topSafeHeight + 10 })
-      .backgroundColor('rgba(255, 255, 255, 0.18)')
-      .opacity(this.getCloseOpacity())
-      .hitTestBehavior(this.getCloseOpacity() > 0.05 ? HitTestMode.Default : HitTestMode.None)
-      .onClick(() => {
-        if (this.onClose) {
-          this.onClose()
-        }
-      })
-    }
-    .width('100%')
-    .height('100%')
-    .opacity(this.visible ? this.layerOpacity : 0)
-    .hitTestBehavior(this.visible && this.layerOpacity > 0.05 && this.contentLayerProgress <= 0.05 && this.progress < 0.90 ? HitTestMode.Default : HitTestMode.None)
-  }
-}
-
-
-@Component
 struct SurfaceNowPlayingView {
   @StorageLink('currentIndex') currentIndex: number = -1
   @StorageLink('totalDuration') totalDuration: number = 0
@@ -1366,9 +887,8 @@ struct SurfaceNowPlayingView {
   @StorageLink('immersiveModeProgress') immersiveModeProgress: number = 0
 
   @Prop activeContent: boolean = false
+  @Prop coverGeometryId: string = ''
   onClose?: () => void
-  onSwipeUpdate?: (offsetY: number) => void
-  onSwipeEnd?: (velocityY: number) => void
   onLyricsProgress?: (progress: number) => void
 
   private shouldBuildActiveContent(): boolean {
@@ -2082,25 +1602,6 @@ struct SurfaceNowPlayingView {
     return this.coverLyricPageIndex === this.lyricsPageIndex
   }
 
-  private canHandlePageSwipe(): boolean {
-    return !this.isImmersiveModeShowing() && !this.isMoreSheetVisible && !this.isOnlineSearchPopupVisible &&
-      !this.isDetailDialogVisible && !this.isApiSettingsDialogVisible && !this.isDeleteDialogVisible
-  }
-
-  private handlePageSwipeUpdate(offsetY: number): void {
-    if (!this.canHandlePageSwipe() || offsetY <= 0 || !this.onSwipeUpdate) {
-      return
-    }
-    this.onSwipeUpdate(offsetY)
-  }
-
-  private handlePageSwipeEnd(velocityY: number): void {
-    if (!this.canHandlePageSwipe() || !this.onSwipeEnd) {
-      return
-    }
-    this.onSwipeEnd(velocityY)
-  }
-
   private handleSubMenuAction(itemId: string): void {
     // 设置按钮：始终打开 API 设置弹窗
     if (itemId === 'settings') {
@@ -2266,6 +1767,7 @@ struct SurfaceNowPlayingView {
       shadowColor: this.getCoverShadowColor(),
       contentOpacity: this.getImmersiveHiddenOpacity(),
       controlsInteractive: this.canUsePlaybackControls(),
+      coverGeometryId: this.coverGeometryId,
       onMoreClick: () => {
         this.openMoreSheet()
       },
@@ -2274,6 +1776,26 @@ struct SurfaceNowPlayingView {
       }
     })
       .zIndex(20)
+  }
+
+  @Builder
+  private CloseButton() {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      SymbolGlyph($r('sys.symbol.chevron_down'))
+        .fontSize(24)
+        .fontColor([this.coverPagePrimaryColor])
+    }
+    .width(44)
+    .height(44)
+    .position({ x: 20, y: this.topSafeHeight + 10 })
+    .backgroundColor('rgba(255, 255, 255, 0.18)')
+    .hitTestBehavior(this.hasLocalOverlayVisible() ? HitTestMode.None : HitTestMode.Default)
+    .onClick(() => {
+      if (this.onClose) {
+        this.onClose()
+      }
+    })
+    .zIndex(80)
   }
 
   @Builder
@@ -2351,15 +1873,6 @@ struct SurfaceNowPlayingView {
           .curve(Curve.EaseInOut)
           .width('100%')
           .height('100%')
-          .gesture(
-            PanGesture({ direction: PanDirection.Vertical, distance: 6 })
-              .onActionUpdate((event: GestureEvent) => {
-                this.handlePageSwipeUpdate(event.offsetY)
-              })
-              .onActionEnd((event: GestureEvent) => {
-                this.handlePageSwipeEnd(event.velocityY)
-              })
-          )
           .onContentDidScroll((_selectedIndex: number, index: number, position: number, _mainAxisLength: number) => {
             if (index === this.coverPageIndex) {
               this.emitLyricsProgress(-position)
@@ -2375,6 +1888,10 @@ struct SurfaceNowPlayingView {
       if (this.isImmersiveModeShowing() && !this.isLyricsPageVisible()) {
         this.ImmersiveCoverExitLayer()
       }
+
+      if (this.shouldBuildActiveContent()) {
+        this.CloseButton()
+      }
     }
     .width('100%')
     .height('100%')
@@ -2386,121 +1903,31 @@ struct SurfaceNowPlayingView {
 
 @Component
 export struct PlayerSurface {
-  @Prop progress: number = 0
-  @Prop mounted: boolean = false
-  @Prop canOpen: boolean = false
-  @Prop dockBottomOffset: number = 0
-  @Prop miniDockBottomOffset: number = 0
-  @Prop lyricsProgress: number = 0
-  @Prop contentLayerProgress: number = 0
-  @Prop miniLayerOpacity: number = 1
-  @Prop morphLayerOpacity: number = 0
-  @Prop miniInteractive: boolean = false
+  @Prop activeContent: boolean = false
+  @Prop coverGeometryId: string = 'player_cover_image'
 
-  onOpen?: () => void
   onClose?: () => void
-  onSwipeUpdate?: (offsetY: number) => void
-  onSwipeEnd?: (velocityY: number) => void
   onLyricsProgress?: (progress: number) => void
 
-  private readonly coverGeometryTransitionId: string = 'player_cover_image'
-
-  private getContentOpacity(): number {
-    return Math.max(0, Math.min(1, this.contentLayerProgress))
-  }
-
-  private isMorphHitTestEnabled(): boolean {
-    // 形变层只在 mini -> full 的早期过渡阶段接管点击。
-    // 一旦真实 full 内容层开始可交互，morph 视觉层必须彻底退出命中测试，
-    // 否则底部按钮会被 morph 里的 Row/Column 接收，SurfaceNowPlayingView 无法收到点击。
-    return this.mounted && this.morphLayerOpacity > 0.05 && this.getContentOpacity() <= 0.05 && this.progress < 0.90
-  }
-
-  private isMiniHitTestEnabled(): boolean {
-    return !this.mounted && this.miniInteractive
-  }
-
-  private getContentLayerZIndex(): number {
-    return this.getContentOpacity() > 0.05 ? 120 : 20
-  }
-
-  private getMorphLayerZIndex(): number {
-    return this.isMorphHitTestEnabled() ? 30 : 5
-  }
-
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      SurfacePlayerMorphHost({
-        progress: this.progress,
-        visible: this.mounted,
-        layerOpacity: this.morphLayerOpacity,
-        dockBottomOffset: this.dockBottomOffset,
-        lyricsProgress: this.lyricsProgress,
-        contentLayerProgress: this.contentLayerProgress,
-        coverGeometryId: this.mounted ? this.coverGeometryTransitionId : '',
-        onClose: () => {
-          if (this.onClose) {
-            this.onClose()
-          }
+    SurfaceNowPlayingView({
+      activeContent: this.activeContent,
+      coverGeometryId: this.coverGeometryId,
+      onClose: () => {
+        if (this.onClose) {
+          this.onClose()
         }
-      })
-        .width('100%')
-        .height('100%')
-        .hitTestBehavior(this.isMorphHitTestEnabled() ? HitTestMode.Default : HitTestMode.None)
-        .zIndex(this.getMorphLayerZIndex())
-
-      SurfaceNowPlayingView({
-        activeContent: this.mounted,
-        onClose: () => {
-          if (this.onClose) {
-            this.onClose()
-          }
-        },
-        onSwipeUpdate: (offsetY: number) => {
-          if (this.onSwipeUpdate) {
-            this.onSwipeUpdate(offsetY)
-          }
-        },
-        onSwipeEnd: (velocityY: number) => {
-          if (this.onSwipeEnd) {
-            this.onSwipeEnd(velocityY)
-          }
-        },
-        onLyricsProgress: (progress: number) => {
-          if (this.onLyricsProgress) {
-            this.onLyricsProgress(progress)
-          }
+      },
+      onLyricsProgress: (progress: number) => {
+        if (this.onLyricsProgress) {
+          this.onLyricsProgress(progress)
         }
-      })
+      }
+    })
       .width('100%')
       .height('100%')
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .clip(true)
-      .opacity(this.getContentOpacity())
-      .hitTestBehavior(this.getContentOpacity() > 0.05 ? HitTestMode.Default : HitTestMode.None)
-      .zIndex(this.getContentLayerZIndex())
-
-      if (this.miniLayerOpacity > 0.001 || this.miniInteractive) {
-        SurfaceMiniPlayer({
-          visible: this.canOpen && (this.miniLayerOpacity > 0.001 || !this.mounted),
-          opacityValue: this.miniLayerOpacity,
-          interactive: this.miniInteractive,
-          dockBottomOffset: this.miniDockBottomOffset,
-          coverGeometryId: this.mounted ? '' : this.coverGeometryTransitionId,
-          onOpen: () => {
-            if (this.miniInteractive && this.onOpen) {
-              this.onOpen()
-            }
-          }
-        })
-        .width('100%')
-        .hitTestBehavior(this.isMiniHitTestEnabled() ? HitTestMode.Default : HitTestMode.None)
-        .zIndex(this.isMiniHitTestEnabled() ? 140 : 0)
-      }
-
-    }
-    .width('100%')
-    .height('100%')
-    .hitTestBehavior(this.mounted || this.miniInteractive ? HitTestMode.Default : HitTestMode.None)
+      .hitTestBehavior(this.activeContent ? HitTestMode.Default : HitTestMode.None)
   }
 }

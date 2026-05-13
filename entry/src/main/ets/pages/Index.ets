@@ -39,9 +39,7 @@ struct Index {
   @StorageLink('songCount') songCount: number = 0
   @StorageLink('currentTab') currentTab: number = 0
 
-  @State private playerMounted: boolean = false
-  @State private playerProgress: number = 0
-  @State private playerDockBottomOffset: number = 0
+  @State private isPlayerExpanded: boolean = false
   @State private coverPixelMap: image.PixelMap | null = null
   @State private isLoading: boolean = false
   @State private loadingStatus: string = ''
@@ -60,9 +58,7 @@ struct Index {
   private readonly hdsMiniBarMediumWidth: number = 260
   private readonly hdsMiniBarLargeWidth: number = 320
   private readonly hdsMiniBarClickGuardDuration: number = 760
-  private readonly dragThreshold: number = 300
-  private playerHideTask: number = -1
-  private playerOpenTask: number = -1
+  private readonly coverGeometryTransitionId: string = 'player_cover_image'
   private hdsMiniBarGuardTask: number = -1
   private hdsMiniBarStateTask: number = -1
   private hdsMiniBarGuardUntil: number = 0
@@ -85,8 +81,6 @@ struct Index {
   }
 
   aboutToDisappear(): void {
-    this.clearPlayerHideTask()
-    this.clearPlayerOpenTask()
     this.clearHdsMiniBarGuardTask()
     this.clearHdsMiniBarStateTask()
   }
@@ -180,20 +174,6 @@ struct Index {
     }
   }
 
-  private clearPlayerHideTask(): void {
-    if (this.playerHideTask >= 0) {
-      clearTimeout(this.playerHideTask)
-      this.playerHideTask = -1
-    }
-  }
-
-  private clearPlayerOpenTask(): void {
-    if (this.playerOpenTask >= 0) {
-      clearTimeout(this.playerOpenTask)
-      this.playerOpenTask = -1
-    }
-  }
-
   private clearHdsMiniBarGuardTask(): void {
     if (this.hdsMiniBarGuardTask >= 0) {
       clearTimeout(this.hdsMiniBarGuardTask)
@@ -210,64 +190,6 @@ struct Index {
 
   private canOpenNowPlaying(): boolean {
     return this.currentIndex >= 0 && this.currentTitle.length > 0
-  }
-
-  private clampProgress(value: number): number {
-    return Math.max(0, Math.min(1, value))
-  }
-
-  private getNowPlayingContentOpacity(): number {
-    // 全屏内容层延后到 morph 空间动画基本落位后再显现。
-    // 避免封面页已经出现时，morph 层里的封面/歌名/歌手仍继续向上飞。
-    const t = this.clampProgress((this.playerProgress - 0.90) / 0.08)
-    return t * t * (3 - 2 * t)
-  }
-
-  private getMiniLayerOpacity(): number {
-    if (!this.canOpenNowPlaying()) {
-      return 0
-    }
-    if (!this.playerMounted) {
-      return 1
-    }
-    return 1 - this.transitionT(0.00, 0.10)
-  }
-
-  private getMorphLayerOpacity(): number {
-    if (!this.playerMounted) {
-      return 0
-    }
-
-    // morph 层在展开初段淡入，在 full 内容接管前淡出。
-    // 这样 full 封面页和 morph 封面不会重叠造成“往上飞”的残影。
-    const fadeIn = this.transitionT(0.00, 0.10)
-    const fadeOut = 1 - this.transitionT(0.94, 0.995)
-    return fadeIn * fadeOut
-  }
-
-  private isMiniInteractive(): boolean {
-    return !this.playerMounted && this.playerProgress <= 0.001
-  }
-
-  private getMiniDockBottomOffset(): number {
-    // Keep the transition mini aligned with the HDS miniBar start position.
-    if (this.playerMounted) {
-      return this.playerDockBottomOffset
-    }
-    return Math.max(0, this.hdsTabBottomMargin - 20)
-  }
-
-  private getPageContentScale(): number {
-    return 1 - 0.025 * this.playerProgress
-  }
-
-  private getPageContentOpacity(): number {
-    return 1 - 0.42 * this.playerProgress
-  }
-
-  private transitionT(start: number, end: number): number {
-    const t = this.clampProgress((this.playerProgress - start) / (end - start))
-    return t * t * (3 - 2 * t)
   }
 
   private switchTab(tabIndex: number): void {
@@ -289,92 +211,39 @@ struct Index {
       return
     }
 
+    if (this.isPlayerExpanded) {
+      return
+    }
+
     if (this.hdsMiniBarCompactContent || this.hdsMiniBarAnimating || this.isHdsMiniBarClickGuardActive()) {
       return
     }
 
-    this.clearPlayerOpenTask()
-    this.clearPlayerHideTask()
-
-    this.playerDockBottomOffset = this.getMiniDockBottomOffset()
-    this.playerMounted = true
-    this.playerProgress = 0
-
-    this.playerOpenTask = setTimeout(() => {
-      this.playerOpenTask = -1
-      animateTo({
-        duration: this.playerOpenDuration,
-        curve: Curve.Friction
-      }, () => {
-        this.playerProgress = 1
-      })
-    }, 16) as number
+    this.lyricsProgress = 0
+    animateTo({
+      duration: this.playerOpenDuration,
+      curve: curves.springMotion()
+    }, () => {
+      this.isPlayerExpanded = true
+    })
   }
 
   private closeNowPlaying(): void {
-    if (!this.playerMounted) {
+    if (!this.isPlayerExpanded) {
       return
     }
 
-    this.clearPlayerOpenTask()
-    this.clearPlayerHideTask()
     this.lyricsProgress = 0
-
     animateTo({
       duration: this.playerCloseDuration,
-      curve: Curve.Friction
+      curve: curves.springMotion()
     }, () => {
-      this.playerProgress = 0
+      this.isPlayerExpanded = false
     })
-
-    this.playerHideTask = setTimeout(() => {
-      this.lyricsProgress = 0
-      this.playerMounted = false
-      this.playerHideTask = -1
-    }, this.playerCloseDuration + 80) as number
-  }
-
-  private updateNowPlayingSwipe(offsetY: number): void {
-    if (offsetY > 0) {
-      this.playerProgress = this.clampProgress(1 - offsetY / this.dragThreshold)
-      return
-    }
-
-    const boost: number = Math.min(1, this.playerProgress + Math.abs(offsetY) / (this.dragThreshold * 2))
-    this.playerProgress = this.clampProgress(boost)
-  }
-
-  private snapNowPlaying(velocityY: number): void {
-    this.clearPlayerOpenTask()
-    const p = this.playerProgress
-    const shouldOpen: boolean = p > 0.45 || velocityY < -400
-    const shouldClose: boolean = p < 0.40 || velocityY > 400
-
-    if (shouldOpen && !shouldClose) {
-      this.clearPlayerHideTask()
-      animateTo({ duration: this.playerOpenDuration, curve: Curve.Friction }, () => {
-        this.playerProgress = 1
-      })
-      return
-    }
-
-    if (shouldClose && !shouldOpen) {
-      this.closeNowPlaying()
-      return
-    }
-
-    if (p >= 0.5) {
-      this.clearPlayerHideTask()
-      animateTo({ duration: this.playerOpenDuration, curve: Curve.Friction }, () => {
-        this.playerProgress = 1
-      })
-    } else {
-      this.closeNowPlaying()
-    }
   }
 
   onBackPress(): boolean | void {
-    if (this.playerMounted || this.playerProgress > 0.01) {
+    if (this.isPlayerExpanded) {
       this.closeNowPlaying()
       return true
     }
@@ -412,7 +281,7 @@ struct Index {
   }
 
   private shouldShowHdsMiniBar(): boolean {
-    return this.canOpenNowPlaying() && !this.shouldUseFullPlayerLayer()
+    return this.canOpenNowPlaying() && !this.isPlayerExpanded
   }
 
   private updateHdsMiniBarStyle(style: HdsBarStyle): void {
@@ -510,7 +379,7 @@ struct Index {
       embeddedInHdsMaterial: true,
       compactMode: this.hdsMiniBarCompactContent,
       animating: this.hdsMiniBarAnimating,
-      coverGeometryId: this.shouldShowHdsMiniBar() ? 'player_cover_image' : '',
+      coverGeometryId: this.shouldShowHdsMiniBar() ? this.coverGeometryTransitionId : '',
       onOpen: () => {
         this.openNowPlaying()
       }
@@ -617,49 +486,21 @@ struct Index {
     }
   }
 
-  private shouldReserveHdsTabSpace(): boolean {
-    return this.songCount > 0 && !this.playerMounted && this.playerProgress <= 0.001
-  }
-
   private shouldUseFullPlayerLayer(): boolean {
-    return this.playerMounted || this.playerProgress > 0.001
+    return this.isPlayerExpanded
   }
 
   private shouldMountPlayerLayer(): boolean {
     return this.shouldUseFullPlayerLayer()
   }
 
-  private getMiniPlayerLayerHeight(): number {
-    if (!this.canOpenNowPlaying()) {
-      return 0
-    }
-    return this.bottomSafeHeight + 20 + this.getMiniDockBottomOffset() + 64
-  }
-
   @Builder
   private PlayerContainer() {
     PlayerSurface({
-      progress: this.playerProgress,
-      mounted: this.playerMounted,
-      canOpen: this.canOpenNowPlaying(),
-      dockBottomOffset: this.playerDockBottomOffset,
-      miniDockBottomOffset: this.getMiniDockBottomOffset(),
-      lyricsProgress: this.lyricsProgress,
-      contentLayerProgress: this.getNowPlayingContentOpacity(),
-      miniLayerOpacity: this.getMiniLayerOpacity(),
-      morphLayerOpacity: this.getMorphLayerOpacity(),
-      miniInteractive: this.isMiniInteractive(),
-      onOpen: () => {
-        this.openNowPlaying()
-      },
+      activeContent: this.isPlayerExpanded,
+      coverGeometryId: this.coverGeometryTransitionId,
       onClose: () => {
         this.closeNowPlaying()
-      },
-      onSwipeUpdate: (offsetY: number) => {
-        this.updateNowPlayingSwipe(offsetY)
-      },
-      onSwipeEnd: (velocityY: number) => {
-        this.snapNowPlaying(velocityY)
       },
       onLyricsProgress: (progress: number) => {
         this.lyricsProgress = progress
@@ -677,28 +518,31 @@ struct Index {
       .width('100%')
       .height('100%')
       .scale({
-        x: this.getPageContentScale(),
-        y: this.getPageContentScale(),
+        x: this.isPlayerExpanded ? 0.975 : 1,
+        y: this.isPlayerExpanded ? 0.975 : 1,
         centerX: '50%',
         centerY: '50%'
       })
-      .opacity(this.getPageContentOpacity())
+      .opacity(this.isPlayerExpanded ? 0.72 : 1)
 
-      Column()
-        .width('100%')
-        .height('100%')
-        .backgroundColor('rgba(0, 0, 0, 0.10)')
-        .opacity(this.playerMounted ? this.playerProgress : 0)
-        .hitTestBehavior(HitTestMode.Transparent)
-        .zIndex(10)
+      if (this.isPlayerExpanded) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('rgba(0, 0, 0, 0.10)')
+          .hitTestBehavior(HitTestMode.Transparent)
+          .transition(TransitionEffect.OPACITY.animation({ duration: 220, curve: Curve.EaseInOut }))
+          .zIndex(10)
+      }
 
       if (this.shouldMountPlayerLayer()) {
         Stack() {
           this.PlayerContainer()
         }
         .width('100%')
-        .height(this.shouldUseFullPlayerLayer() ? '100%' : this.getMiniPlayerLayerHeight())
-        .hitTestBehavior(this.shouldUseFullPlayerLayer() ? HitTestMode.Default : HitTestMode.Transparent)
+        .height('100%')
+        .hitTestBehavior(HitTestMode.Default)
+        .transition(TransitionEffect.OPACITY.animation({ duration: 180, curve: Curve.EaseOut }))
         .zIndex(30)
       }
     }
